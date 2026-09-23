@@ -30,10 +30,10 @@ app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 app.config['MAX_CONTENT_LENGTH'] = 8 * 1024 * 1024
 
-ESEWA_ENV = os.environ.get('ESEWA_ENV', 'uat').lower()
-ESEWA_PRODUCT_CODE = os.environ.get('ESEWA_PRODUCT_CODE', 'EPAYTEST')
-ESEWA_SECRET_KEY = os.environ.get('ESEWA_SECRET_KEY', '8gBm/:&EnhH.1/q')
-KHALTI_ENV = os.environ.get('KHALTI_ENV', 'test').lower()
+ESEWA_ENV = os.environ.get('ESEWA_ENV', 'uat').strip().lower()
+ESEWA_PRODUCT_CODE = os.environ.get('ESEWA_PRODUCT_CODE', 'EPAYTEST').strip()
+ESEWA_SECRET_KEY = os.environ.get('ESEWA_SECRET_KEY', '8gBm/:&EnhH.1/q').strip()
+KHALTI_ENV = os.environ.get('KHALTI_ENV', 'test').strip().lower()
 KHALTI_SECRET_KEY = os.environ.get('KHALTI_SECRET_KEY', '')
 BASE_URL = os.environ.get('CAMPUS_BASE_URL', '').rstrip('/')
 
