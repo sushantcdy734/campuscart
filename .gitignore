@@ -1,0 +1,10 @@
+.env
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+uploads/*
+!uploads/.gitkeep
+campuscart.db
+*.sqlite
+*.sqlite3

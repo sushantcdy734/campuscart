@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CampusCart — Student Marketplace</title>
+  <link rel="stylesheet" href="/static/style.css?v=20260923v3">
+</head>
+<body>
+<header class="topbar">
+  <div class="container nav">
+    <a class="logo" href="#"><span>Campus</span>Cart</a>
+    <div class="search"><span>⌕</span><input id="searchInput" placeholder="Search products, brands and sellers..."></div>
+    <div class="nav-actions">
+      <button class="link-btn" onclick="openAuth('login')">Login</button>
+      <button class="secondary nav-sell" onclick="openAuth('register')">Register</button>
+      <span id="userArea"></span>
+      <button class="cart-btn" onclick="openCart()">🛒 <b>Cart</b> <i id="cartCount">0</i></button>
+    </div>
+  </div>
+</header>
+
+<section class="hero">
+  <div class="container hero-grid">
+    <div>
+      <div class="pill">🎓 Built for students</div>
+      <h1>Buy smart.<br><span>Sell on campus.</span></h1>
+      <p>The simple marketplace for students to buy and sell books, gadgets, notes, furniture and more.</p>
+      <div class="hero-buttons">
+        <a href="#products" class="primary">Shop now →</a>
+        <button class="secondary" onclick="currentUser?.role==='seller'?openSellerDashboard():openAuth('register')">Sell an item</button>
+      </div>
+      <div class="trust"><span>✓ Student-focused</span><span>✓ Secure checkout</span><span>✓ Local delivery</span></div>
+    </div>
+    <div class="hero-card">
+      <div class="floating">🔥 Trending on campus</div>
+      <div class="cc-mini-grid" id="heroProducts"></div>
+      <div class="preview-info"><div><small>Popular today</small><h3>Semester essentials</h3><p>Starting from <b>Rs. 450</b></p></div><span class="rating">★ 4.9</span></div>
+    </div>
+  </div>
+</section>
+
+<section class="cc-stats-strip">
+  <div class="container cc-stats-grid">
+    <div class="cc-stat"><strong>5,200+</strong><span>Students</span></div>
+    <div class="cc-stat"><strong>18</strong><span>Colleges</span></div>
+    <div class="cc-stat"><strong>4,800+</strong><span>Listings</span></div>
+    <div class="cc-stat"><strong>4.7★</strong><span>Avg rating</span></div>
+  </div>
+</section>
+
+<section class="container categories">
+  <div class="section-head"><div><small>EXPLORE</small><h2>Shop by category</h2></div></div>
+  <div class="category-grid">
+    <button onclick="filterCategory('Books')">📚<b>Books</b><small>120+ items</small></button>
+    <button onclick="filterCategory('Electronics')">💻<b>Electronics</b><small>85+ items</small></button>
+    <button onclick="filterCategory('Notes')">📝<b>Notes</b><small>60+ items</small></button>
+    <button onclick="filterCategory('Furniture')">🪑<b>Furniture</b><small>35+ items</small></button>
+    <button onclick="filterCategory('Clothing')">👕<b>Clothing</b><small>45+ items</small></button>
+    <button onclick="filterCategory('Others')">🎒<b>Others</b><small>90+ items</small></button>
+  </div>
+</section>
+
+<section class="container" style="padding:24px 0 0"><div class="daraz-tools"><button class="secondary" onclick="toggleFilters()">☰ Filters</button><button class="secondary" onclick="openAddresses()">📍 My addresses</button><button class="secondary" onclick="openStoreSetup()">🏪 My store</button></div><div id="filterPanel" class="filter-panel"><b>Quick filters</b><label>Maximum price <input id="maxPrice" type="number" placeholder="e.g. 5000" oninput="renderProducts()"></label><label>Minimum rating <select id="minRating" onchange="renderProducts()"><option value="0">Any rating</option><option value="4">4★ & above</option><option value="3">3★ & above</option></select></label><label><input id="inStockOnly" type="checkbox" onchange="renderProducts()"> In stock only</label></div></section>
+
+<section class="products-section" id="products">
+  <div class="container">
+    <div class="section-head">
+      <div><small>MARKETPLACE</small><h2>Featured products</h2></div>
+      <select id="sortSelect"><option value="default">Sort: Featured</option><option value="low">Price: Low to high</option><option value="high">Price: High to low</option></select>
+    </div>
+    <div class="product-grid" id="productGrid"></div>
+  </div>
+</section>
+
+<section class="products-section alt-bg" id="fresh">
+  <div class="container">
+    <div class="section-head">
+      <div><small>JUST ADDED</small><h2>Freshly listed</h2></div>
+      <a class="link-btn" href="#products">See all →</a>
+    </div>
+    <div class="product-grid" id="freshGrid"></div>
+  </div>
+</section>
+
+<section class="sell-banner">
+  <div class="container sell-inner">
+    <div><small>TURN UNUSED INTO CASH</small><h2>Have something to sell?</h2><p>List your item and reach students around your campus.</p></div>
+    <button class="primary" onclick="currentUser?.role==='seller'?openSellerDashboard():openAuth('register')">Start selling →</button>
+  </div>
+</section>
+
+<section class="container how">
+  <div class="section-head"><div><small>HOW IT WORKS</small><h2>Simple from start to finish</h2></div></div>
+  <div class="steps">
+    <div><strong>01</strong><h3>Find your item</h3><p>Search by category, price or product name.</p></div>
+    <div><strong>02</strong><h3>Add to cart</h3><p>Choose what you need and review your order.</p></div>
+    <div><strong>03</strong><h3>Pay securely</h3><p>Checkout with eSewa, Khalti or cash on delivery.</p></div>
+    <div><strong>04</strong><h3>Get it delivered</h3><p>Connect with the seller and receive your item.</p></div>
+  </div>
+</section>
+
+<footer>
+  <div class="container footer-grid">
+    <div><a class="logo" href="#"><span>Campus</span>Cart</a><p>Student-to-student commerce, made easy.</p></div>
+    <div><b>Marketplace</b><a href="#products">Products</a><a href="#">Categories</a><a href="#">Sell an item</a></div>
+    <div><b>Support</b><a href="#">Help center</a><a href="#">Contact</a><a href="#">Terms</a></div>
+    <div><b>Payments</b><p>eSewa · Khalti · COD</p></div>
+  </div>
+  <div class="copyright">© 2026 CampusCart. Student Marketplace.</div>
+</footer>
+
+<div class="overlay" id="overlay" onclick="closeCart()"></div>
+<aside class="cart" id="cartPanel">
+  <div class="cart-head"><h2>Your cart</h2><button onclick="closeCart()">×</button></div>
+  <div id="cartItems"></div>
+  <div class="cart-bottom"><div><span>Total</span><strong id="cartTotal">Rs. 0</strong></div><button class="primary full" onclick="checkout()">Proceed to checkout</button></div>
+</aside>
+<div class="toast" id="toast"></div>
+
+<!-- Authentication modal -->
+<div class="auth-overlay" id="authOverlay">
+  <div class="auth-modal">
+    <button class="auth-close" onclick="closeAuth()">×</button>
+    <div id="authContent"></div>
+  </div>
+</div>
+
+<!-- Checkout -->
+<div class="auth-overlay" id="checkoutOverlay"><div class="auth-modal"><button class="auth-close" onclick="closeCheckout()">×</button><div id="checkoutContent"></div></div></div>
+<!-- Dashboard -->
+<div class="auth-overlay" id="dashboardOverlay"><div class="auth-modal dashboard-modal"><button class="auth-close" onclick="closeDashboard()">×</button><div id="dashboardContent"></div></div></div>
+<!-- Orders -->
+<div class="auth-overlay" id="ordersOverlay"><div class="auth-modal dashboard-modal"><button class="auth-close" onclick="closeOrders()">×</button><div id="ordersContent"></div></div></div>
+<script src="/static/script.js?v=20260923v3"></script>
+</body>
+</html>

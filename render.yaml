@@ -1,0 +1,34 @@
+databases:
+  - name: campuscart-db
+    databaseName: campuscart
+    user: campuscart
+
+services:
+  - type: web
+    name: campuscart
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn --workers 2 --threads 4 --bind 0.0.0.0:$PORT app:app
+    healthCheckPath: /
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: campuscart-db
+          property: connectionString
+      - key: FLASK_ENV
+        value: production
+      - key: CAMPUS_SECRET_KEY
+        generateValue: true
+      - key: CAMPUS_BASE_URL
+        sync: false
+      - key: ESEWA_ENV
+        value: uat
+      - key: ESEWA_PRODUCT_CODE
+        value: EPAYTEST
+      - key: ESEWA_SECRET_KEY
+        sync: false
+      - key: KHALTI_ENV
+        value: test
+      - key: KHALTI_SECRET_KEY
+        sync: false
