@@ -34,7 +34,7 @@ ESEWA_ENV = os.environ.get('ESEWA_ENV', 'uat').strip().lower()
 ESEWA_PRODUCT_CODE = os.environ.get('ESEWA_PRODUCT_CODE', 'EPAYTEST').strip()
 ESEWA_SECRET_KEY = os.environ.get('ESEWA_SECRET_KEY', '8gBm/:&EnhH.1/q').strip()
 KHALTI_ENV = os.environ.get('KHALTI_ENV', 'test').strip().lower()
-KHALTI_SECRET_KEY = os.environ.get('KHALTI_SECRET_KEY', '')
+KHALTI_SECRET_KEY = os.environ.get('KHALTI_SECRET_KEY', '').strip()
 BASE_URL = os.environ.get('CAMPUS_BASE_URL', '').rstrip('/')
 
 ESEWA_FORM_URL = 'https://epay.esewa.com.np/api/epay/main/v2/form' if ESEWA_ENV == 'production' else 'https://rc-epay.esewa.com.np/api/epay/main/v2/form'
