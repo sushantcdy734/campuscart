@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>CampusCart — Student Marketplace</title>
-  <link rel="stylesheet" href="/static/style.css?v=20260923v3">
+  <link rel="stylesheet" href="/static/style.css?v=20260925v5">
 </head>
 <body>
 <header class="topbar">
@@ -12,8 +12,8 @@
     <a class="logo" href="#"><span>Campus</span>Cart</a>
     <div class="search"><span>⌕</span><input id="searchInput" placeholder="Search products, brands and sellers..."></div>
     <div class="nav-actions">
-      <button class="link-btn" onclick="openAuth('login')">Login</button>
-      <button class="secondary nav-sell" onclick="openAuth('register')">Register</button>
+      <button class="link-btn" id="loginBtn" onclick="openAuth('login')">Login</button>
+      <button class="secondary nav-sell" id="registerBtn" onclick="openAuth('register')">Register</button>
       <span id="userArea"></span>
       <button class="cart-btn" onclick="openCart()">🛒 <b>Cart</b> <i id="cartCount">0</i></button>
     </div>
@@ -132,6 +132,6 @@
 <div class="auth-overlay" id="dashboardOverlay"><div class="auth-modal dashboard-modal"><button class="auth-close" onclick="closeDashboard()">×</button><div id="dashboardContent"></div></div></div>
 <!-- Orders -->
 <div class="auth-overlay" id="ordersOverlay"><div class="auth-modal dashboard-modal"><button class="auth-close" onclick="closeOrders()">×</button><div id="ordersContent"></div></div></div>
-<script src="/static/script.js?v=20260923v3"></script>
+<script src="/static/script.js?v=20260925v5"></script>
 </body>
 </html>

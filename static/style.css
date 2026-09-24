@@ -19,7 +19,6 @@
 
 /* ═══════════════════════════════════════════════════════════════
    CampusCart — Visual Upgrade v2
-   Appended below existing styles. Delete this block to revert.
    ═══════════════════════════════════════════════════════════════ */
 
 .product, .primary, .secondary, .add, .cart-btn,
@@ -234,4 +233,81 @@
 @media (max-width: 520px) {
   .cc-stats-grid { grid-template-columns: repeat(2, 1fr); }
   .cc-stat strong { font-size: 18px; }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   NAV COMPACT + READABLE — prevents wrapping
+   ═══════════════════════════════════════════════════════════════ */
+
+.nav-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+#userArea {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: nowrap;
+}
+.link-btn {
+  padding: 8px 11px;
+  border-radius: 8px;
+  color: #3d4759;
+  font-weight: 600;
+  font-size: 13px;
+  line-height: 1;
+  white-space: nowrap;
+  transition: background .15s, color .15s;
+}
+.link-btn:hover {
+  background: #f3f1ff;
+  color: #5849d8;
+}
+.user-chip {
+  padding: 7px 10px;
+  font-size: 12px;
+  white-space: nowrap;
+  margin-right: 2px;
+}
+.cart-btn {
+  padding: 8px 11px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.dark .link-btn,
+.dark .nav-actions button {
+  color: #e0e6f0 !important;
+}
+.dark .link-btn:hover,
+.dark .nav-actions button:hover {
+  background: rgba(103, 87, 232, 0.24);
+  color: #ffffff !important;
+}
+.dark .user-chip {
+  background: rgba(103, 87, 232, 0.24);
+  color: #d6ccff;
+}
+.dark .nav-sell,
+.dark .nav-actions .secondary {
+  background: #1b2130;
+  color: #e8ecf4;
+  border-color: #31394b;
+}
+.dark .nav-sell:hover,
+.dark .nav-actions .secondary:hover {
+  background: #232a3d;
+}
+@media (max-width: 900px) {
+  .nav { gap: 12px; }
+  .nav-actions { gap: 4px; }
+  .link-btn { padding: 7px 9px; font-size: 12px; }
+  .user-chip { padding: 6px 8px; font-size: 11px; }
+  .cart-btn { padding: 7px 9px; font-size: 12px; }
+}
+@media (max-width: 520px) {
+  #userArea .link-btn:nth-child(n+4) { display: none; }
+  .cart-btn b { display: none; }
 }

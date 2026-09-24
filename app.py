@@ -63,9 +63,7 @@ class PgCursorCompat:
         sql = re.sub(r'\bINSERT\s+OR\s+IGNORE\s+INTO\b', 'INSERT INTO', sql, flags=re.I)
         if 'INSERT OR IGNORE' in sql.upper():
             sql = sql.replace('INSERT OR IGNORE', 'INSERT')
-        # qmark placeholders used by the original SQLite app.
         sql = sql.replace('?', '%s')
-        # SQLite AUTOINCREMENT syntax for schema scripts.
         sql = re.sub(r'INTEGER\s+PRIMARY\s+KEY\s+AUTOINCREMENT', 'BIGSERIAL PRIMARY KEY', sql, flags=re.I)
         if re.match(r'^\s*INSERT\s+INTO\s+(?!wishlists\b)', sql, flags=re.I) and 'RETURNING ' not in sql.upper() and ' ON CONFLICT ' not in sql.upper():
             sql = sql.rstrip().rstrip(';') + ' RETURNING id'
@@ -77,7 +75,6 @@ class PgCursorCompat:
         if str(sql).strip().upper().startswith('PRAGMA'):
             return self
         converted = self._sql(sql)
-        # Handle INSERT OR IGNORE after conversion.
         if re.search(r'^\s*INSERT\s+INTO\s+', converted, re.I) and 'OR IGNORE' in original.upper() and 'ON CONFLICT' not in converted.upper():
             converted = converted.rstrip().rstrip(';') + ' ON CONFLICT DO NOTHING'
         self._cur.execute(converted, params or ())
@@ -87,7 +84,6 @@ class PgCursorCompat:
         return self
     def executemany(self, sql, params_seq):
         converted = self._sql(sql)
-        # Seed inserts do not need generated ids.
         converted = re.sub(r'\s+RETURNING\s+id\s*$', '', converted, flags=re.I)
         self._cur.executemany(converted, params_seq)
         return self
@@ -185,7 +181,6 @@ def init_db():
     );
     ''')
 
-    # Safe upgrades for databases created by the previous SQLite version.
     if not USING_POSTGRES:
         product_cols = {r['name'] for r in c.execute('PRAGMA table_info(products)').fetchall()}
         if 'image_url' not in product_cols:
@@ -201,7 +196,6 @@ def init_db():
     c.commit(); c.close()
 
 
-# Initialize schema when imported by Gunicorn or another WSGI server.
 init_db()
 
 
@@ -260,7 +254,7 @@ def create_order(c, buyer_id, validated, method, status='Payment Pending', payme
             'INSERT INTO order_items(order_id,product_id,seller_id,quantity,price) VALUES(?,?,?,?,?)',
             (oid, p['id'], p['seller_id'], qty, p['price'])
         )
-        c.execute('UPDATE products SET stock=stock-? WHERE id=?', (qty, p['id']))
+        # Stock is now reserved at add-to-cart time — do NOT reduce here.
     return oid, total
 
 
@@ -268,8 +262,6 @@ def restore_stock(c, order_id):
     items = c.execute('SELECT product_id, quantity FROM order_items WHERE order_id=?', (order_id,)).fetchall()
     for item in items:
         c.execute('UPDATE products SET stock=stock+? WHERE id=?', (item['quantity'], item['product_id']))
-
-
 
 
 @app.get('/static/<path:filename>')
@@ -322,11 +314,104 @@ def products():
     c=db(); rows=c.execute('SELECT p.*,u.name seller_name,COALESCE((SELECT AVG(r.rating) FROM reviews r WHERE r.product_id=p.id),0) rating,COALESCE((SELECT COUNT(*) FROM reviews r WHERE r.product_id=p.id),0) review_count FROM products p LEFT JOIN users u ON u.id=p.seller_id WHERE p.stock>0 ORDER BY p.id DESC').fetchall(); c.close(); return jsonify(products=[dict(x) for x in rows])
 
 
+# ═══════════════════════════════════════════════════════════════
+# Cart stock reservation — reduces stock when items are added to cart
+# ═══════════════════════════════════════════════════════════════
+
+@app.post('/api/cart/reserve')
+def cart_reserve():
+    """Reduce stock when an item is added to a buyer's cart."""
+    u, err = login_required('buyer')
+    if err:
+        return err
+
+    d = request.get_json() or {}
+    try:
+        pid = int(d.get('product_id', 0))
+        qty = max(1, int(d.get('qty', 1)))
+    except (TypeError, ValueError):
+        return jsonify(error='Invalid product or quantity.'), 400
+
+    c = db()
+    try:
+        p = c.execute('SELECT id, name, stock FROM products WHERE id=?', (pid,)).fetchone()
+        if not p:
+            return jsonify(error='Product not found.'), 404
+        if p['stock'] < qty:
+            return jsonify(error=f'Only {p["stock"]} left in stock.'), 400
+
+        c.execute('UPDATE products SET stock=stock-? WHERE id=?', (qty, pid))
+        c.commit()
+
+        new_stock = c.execute('SELECT stock FROM products WHERE id=?', (pid,)).fetchone()['stock']
+        return jsonify(success=True, product_id=pid, new_stock=new_stock)
+    except Exception as e:
+        c.rollback()
+        return jsonify(error=str(e)), 500
+    finally:
+        c.close()
+
+
+@app.post('/api/cart/release')
+def cart_release():
+    """Restore stock when an item is removed from the cart."""
+    u, err = login_required('buyer')
+    if err:
+        return err
+
+    d = request.get_json() or {}
+    try:
+        pid = int(d.get('product_id', 0))
+        qty = max(1, int(d.get('qty', 1)))
+    except (TypeError, ValueError):
+        return jsonify(error='Invalid product or quantity.'), 400
+
+    c = db()
+    try:
+        c.execute('UPDATE products SET stock=stock+? WHERE id=?', (qty, pid))
+        c.commit()
+        new_stock = c.execute('SELECT stock FROM products WHERE id=?', (pid,)).fetchone()['stock']
+        return jsonify(success=True, product_id=pid, new_stock=new_stock)
+    except Exception as e:
+        c.rollback()
+        return jsonify(error=str(e)), 500
+    finally:
+        c.close()
+
+
+@app.post('/api/cart/release-all')
+def cart_release_all():
+    """Restore stock for every item in the cart — called on logout."""
+    u, err = login_required('buyer')
+    if err:
+        return err
+
+    d = request.get_json() or {}
+    items = d.get('items', [])
+
+    c = db()
+    try:
+        for item in items:
+            try:
+                pid = int(item.get('id'))
+                qty = max(0, int(item.get('qty', 0)))
+                if pid and qty > 0:
+                    c.execute('UPDATE products SET stock=stock+? WHERE id=?', (qty, pid))
+            except (TypeError, ValueError):
+                continue
+        c.commit()
+        return jsonify(success=True)
+    except Exception as e:
+        c.rollback()
+        return jsonify(error=str(e)), 500
+    finally:
+        c.close()
+
+
 @app.post('/api/products')
 def add_product():
     u,err=login_required('seller')
     if err:return err
-    # Multipart form for image upload.
     form = request.form
     name=form.get('name','').strip(); category=form.get('category','Others'); price=form.get('price'); stock=form.get('stock',1); icon=form.get('icon','📦'); desc=form.get('description','').strip()
     try: price=float(price); stock=int(stock)
@@ -356,7 +441,6 @@ def delete_product(pid):
     if err:return err
     c=db(); p=c.execute('SELECT * FROM products WHERE id=? AND seller_id=?',(pid,u['id'])).fetchone()
     if not p: c.close(); return jsonify(error='Product not found or not owned by you.'),404
-    # Keep historical order references intact; hiding a listing sets stock to zero.
     c.execute('UPDATE products SET stock=0 WHERE id=? AND seller_id=?',(pid,u['id'])); c.commit(); c.close()
     return jsonify(message='Product removed from marketplace')
 
@@ -392,7 +476,8 @@ def checkout():
             pid=int(item['id']); qty=int(item['qty'])
             if qty < 1: raise ValueError('Invalid quantity.')
             p=c.execute('SELECT * FROM products WHERE id=?',(pid,)).fetchone()
-            if not p or p['stock']<qty:raise ValueError(f'Not enough stock for {p["name"] if p else "a product"}.')
+            # Stock was reserved at add-to-cart time; only sanity-check that it exists.
+            if not p:raise ValueError(f'Product not found.')
             validated.append((p,qty)); total+=p['price']*qty
         total=round(total,2)
         if method == 'COD':
@@ -409,7 +494,6 @@ def checkout():
                 'product_code':ESEWA_PRODUCT_CODE,'product_service_charge':'0','product_delivery_charge':'0',
                 'success_url':success,'failure_url':failure,'signed_field_names':'total_amount,transaction_uuid,product_code',
                 'signature':make_esewa_signature(f'{total:.2f}',tx)})
-        # Khalti
         if not KHALTI_SECRET_KEY:
             c.rollback(); c.close(); return jsonify(error='Khalti is not configured. Set KHALTI_SECRET_KEY in .env.'),503
         oid,total=create_order(c,u['id'],validated,method,status='Payment Pending',payment_status='Initiated')
@@ -424,7 +508,6 @@ def checkout():
         except Exception as ex:
             c.rollback(); c.close(); return jsonify(error=f'Khalti connection failed: {ex}'),502
         if r.status_code >= 400 or not data.get('pidx'):
-            restore_stock(c, oid)
             c.execute('DELETE FROM order_items WHERE order_id=?', (oid,))
             c.execute('DELETE FROM orders WHERE id=?', (oid,))
             c.commit(); c.close(); return jsonify(error=data.get('detail') or data.get('error_key') or 'Khalti could not initiate the payment.'),502
@@ -447,7 +530,6 @@ def esewa_success():
     c=db(); pay=c.execute('SELECT * FROM payments WHERE provider=? AND transaction_uuid=?',( 'eSewa',tx)).fetchone()
     if not pay: c.close(); return 'Payment record not found.',404
     if abs(pay['amount']-total)>0.01: c.close(); return 'Payment amount mismatch.',400
-    # Server-to-server verification with eSewa status API.
     try:
         vr=requests.get(ESEWA_STATUS_URL,params={'product_code':ESEWA_PRODUCT_CODE,'total_amount':f'{total:.2f}','transaction_uuid':tx},timeout=15)
         v=vr.json()
@@ -459,7 +541,7 @@ def esewa_success():
         c.execute("UPDATE orders SET payment_status='Paid',status='Pending' WHERE id=? AND payment_status!='Paid'",(pay['order_id'],))
         c.commit(); c.close(); return redirect('/?payment=success&order='+str(pay['order_id']))
     c.execute("UPDATE payments SET status=?,raw_response=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",(status or 'Failed',json.dumps(data),pay['id']))
-    restore_stock(c,pay['order_id']); c.execute("UPDATE orders SET payment_status='Failed',status='Cancelled' WHERE id=?",(pay['order_id'],)); c.commit(); c.close()
+    c.execute("UPDATE orders SET payment_status='Failed',status='Cancelled' WHERE id=?",(pay['order_id'],)); c.commit(); c.close()
     return redirect('/?payment=failed&order='+str(pay['order_id']))
 
 
@@ -470,7 +552,7 @@ def esewa_failure():
     if tx:
         pay=c.execute('SELECT * FROM payments WHERE provider=? AND transaction_uuid=?',( 'eSewa',tx)).fetchone()
         if pay:
-            restore_stock(c,pay['order_id']); c.execute("UPDATE payments SET status='Failed',updated_at=CURRENT_TIMESTAMP WHERE id=?",(pay['id'],)); c.execute("UPDATE orders SET payment_status='Failed',status='Cancelled' WHERE id=?",(pay['order_id'],))
+            c.execute("UPDATE payments SET status='Failed',updated_at=CURRENT_TIMESTAMP WHERE id=?",(pay['id'],)); c.execute("UPDATE orders SET payment_status='Failed',status='Cancelled' WHERE id=?",(pay['order_id'],))
     c.commit(); c.close(); return redirect('/?payment=failed')
 
 
@@ -492,7 +574,7 @@ def khalti_return():
         c.execute("UPDATE payments SET status='Complete',reference_id=?,raw_response=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",(data.get('transaction_id') or data.get('pidx'),json.dumps(data),pay['id']))
         c.execute("UPDATE orders SET payment_status='Paid',status='Pending' WHERE id=? AND payment_status!='Paid'",(pay['order_id'],)); c.commit(); c.close(); return redirect('/?payment=success&order='+str(pay['order_id']))
     c.execute("UPDATE payments SET status=?,raw_response=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",(data.get('status','Failed'),json.dumps(data),pay['id']))
-    restore_stock(c,pay['order_id']); c.execute("UPDATE orders SET payment_status='Failed',status='Cancelled' WHERE id=?",(pay['order_id'],)); c.commit(); c.close(); return redirect('/?payment=failed&order='+str(pay['order_id']))
+    c.execute("UPDATE orders SET payment_status='Failed',status='Cancelled' WHERE id=?",(pay['order_id'],)); c.commit(); c.close(); return redirect('/?payment=failed&order='+str(pay['order_id']))
 
 
 @app.patch('/api/orders/<int:oid>/status')
@@ -580,8 +662,6 @@ def edit_product(pid):
     vals.extend([pid,u['id']]); c=db(); c.execute('UPDATE products SET '+','.join(fields)+' WHERE id=? AND seller_id=?',vals); c.commit(); c.close(); return jsonify(message='Product updated')
 
 
-
-# Messaging and marketplace support tables
 def _ultimate_upgrade():
     c=db()
     c.executescript("""
@@ -739,7 +819,6 @@ def admin_analytics():
  c.close();return jsonify(data)
 
 
-# ===== Daraz-style marketplace expansion =====
 def _daraz_upgrade():
     c=db(); c.executescript("""
     CREATE TABLE IF NOT EXISTS stores(id INTEGER PRIMARY KEY AUTOINCREMENT,seller_id INTEGER UNIQUE NOT NULL,store_name TEXT NOT NULL,description TEXT DEFAULT '',logo_url TEXT,created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);

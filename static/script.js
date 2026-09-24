@@ -20,11 +20,74 @@ function renderProducts(){
   grid.innerHTML=arr.length?arr.map(p=>`<article class="product" data-product-id="${p.id}">${imageHtml(p)}<div class="product-body"><span class="tag">${escapeHtml(p.category)}</span><h3>${escapeHtml(p.name)}</h3><p>${escapeHtml(p.description||'')}</p><small class="seller-line">Seller: ${escapeHtml(p.seller_name||'CampusCart')} · Stock ${p.stock}</small><div class="product-actions">${p.seller_id?`<button class="link-btn" onclick="openStore(${p.seller_id})">Visit store</button>${currentUser&&Number(currentUser.id)===Number(p.seller_id)?'<span class="seller-line">Your listing</span>':`<button class="secondary chat-seller" onclick="openChat(${p.seller_id},${p.id})">💬 Chat seller</button>`}`:''}</div><div class="price-row"><span class="price">${money(p.price)}</span><button class="add" onclick="addToCart(${p.id})">+ Add</button></div></div></article>`).join(''):`<div class="empty" style="grid-column:1/-1">No products found.</div>`;
 }
 function filterCategory(c){activeCategory=c;document.getElementById('products').scrollIntoView({behavior:'smooth'});renderProducts()}
-function addToCart(id){const p=products.find(x=>x.id===id);if(!p)return;const item=cart.find(x=>x.id===id);if(item){if(item.qty>=p.stock)return showToast('Maximum available stock reached');item.qty++}else cart.push({...p,qty:1});saveCart();showToast('Added to cart')}
+
+/* ═══════════════════════════════════════════════════════════════
+   MODIFIED: addToCart reserves stock on the server
+   ═══════════════════════════════════════════════════════════════ */
+async function addToCart(id){
+  const p = products.find(x => x.id === id);
+  if(!p) return;
+
+  if(!currentUser){
+    showToast('Please log in to add items to cart');
+    return openAuth('login');
+  }
+
+  const item = cart.find(x => x.id === id);
+  const currentQty = item ? item.qty : 0;
+  if(currentQty >= p.stock){
+    return showToast('Maximum available stock reached');
+  }
+
+  try {
+    const res = await api('/api/cart/reserve', {
+      method: 'POST',
+      body: JSON.stringify({ product_id: id, qty: 1 })
+    });
+    p.stock = res.new_stock;
+  } catch(e){
+    return showToast(e.message);
+  }
+
+  if(item) item.qty++;
+  else cart.push({...p, qty: 1});
+
+  saveCart();
+  if(typeof renderProducts === 'function') renderProducts();
+  if(typeof renderFreshListings === 'function') renderFreshListings();
+  showToast(`Added to cart · ${p.stock} left`);
+}
+
 function saveCart(){localStorage.setItem('campusCart',JSON.stringify(cart));updateCart();renderCart()}
 function updateCart(){document.getElementById('cartCount').textContent=cart.reduce((s,x)=>s+x.qty,0)}
 function renderCart(){const el=document.getElementById('cartItems');if(!cart.length){el.innerHTML='<div class="empty">🛒<br><br>Your cart is empty.</div>';document.getElementById('cartTotal').textContent=money(0);return}el.innerHTML=cart.map(x=>`<div class="cart-item">${imageHtml(x,'cart-icon')}<div style="flex:1"><h4>${escapeHtml(x.name)}</h4><small>${money(x.price)} × ${x.qty}</small></div><button class="add" onclick="removeOne(${x.id})">−</button></div>`).join('');document.getElementById('cartTotal').textContent=money(cart.reduce((s,x)=>s+x.price*x.qty,0))}
-function removeOne(id){let x=cart.find(a=>a.id===id);if(x.qty>1)x.qty--;else cart=cart.filter(a=>a.id!==id);saveCart()}
+
+/* ═══════════════════════════════════════════════════════════════
+   MODIFIED: removeOne releases reserved stock
+   ═══════════════════════════════════════════════════════════════ */
+async function removeOne(id){
+  const item = cart.find(a => a.id === id);
+  if(!item) return;
+
+  try {
+    const res = await api('/api/cart/release', {
+      method: 'POST',
+      body: JSON.stringify({ product_id: id, qty: 1 })
+    });
+    const p = products.find(x => x.id === id);
+    if(p) p.stock = res.new_stock;
+  } catch(e){
+    // Continue with local cart change even if release fails
+  }
+
+  if(item.qty > 1) item.qty--;
+  else cart = cart.filter(a => a.id !== id);
+
+  saveCart();
+  if(typeof renderProducts === 'function') renderProducts();
+  if(typeof renderFreshListings === 'function') renderFreshListings();
+}
+
 function openCart(){document.getElementById('cartPanel').classList.add('open');document.getElementById('overlay').classList.add('open');renderCart()}
 function closeCart(){document.getElementById('cartPanel').classList.remove('open');document.getElementById('overlay').classList.remove('open')}
 async function checkout(){if(!cart.length)return showToast('Your cart is empty');if(!currentUser)return openAuth('login');if(currentUser.role!=='buyer')return showToast('Only buyers can place orders');openCheckout()}
@@ -36,8 +99,45 @@ function selectRole(role){document.getElementById('regRole').value=role;document
 function closeAuth(){document.getElementById('authOverlay').classList.remove('open')}
 async function registerUser(e){e.preventDefault();try{await api('/api/register',{method:'POST',body:JSON.stringify({name:regName.value,email:regEmail.value,password:regPassword.value,role:regRole.value})});closeAuth();await loadUser();showToast('Account created successfully')}catch(err){showToast(err.message)}}
 async function loginUser(e){e.preventDefault();try{await api('/api/login',{method:'POST',body:JSON.stringify({email:loginEmail.value,password:loginPassword.value})});closeAuth();await loadUser();showToast('Login successful')}catch(err){showToast(err.message)}}
-async function loadUser(){try{const d=await api('/api/me');currentUser=d.user}catch(e){currentUser=null}const area=document.getElementById('userArea');if(currentUser){area.innerHTML=`<span class="user-chip">${currentUser.role==='seller'?'🏪':'🛒'} ${escapeHtml(currentUser.name)}</span><button class="link-btn" onclick="openDashboard()">Dashboard</button><button class="link-btn messages-nav" onclick="openMessageInbox()">💬 Messages</button><button class="link-btn" onclick="logoutUser()">Logout</button>`}else area.innerHTML=''}
-async function logoutUser(){await api('/api/logout',{method:'POST'});currentUser=null;showToast('Logged out');loadUser()}
+
+async function loadUser(){
+  try{const d=await api('/api/me');currentUser=d.user}catch(e){currentUser=null}
+  const area=document.getElementById('userArea');
+  const loginBtn=document.getElementById('loginBtn');
+  const registerBtn=document.getElementById('registerBtn');
+  if(currentUser){
+    if(loginBtn) loginBtn.style.display='none';
+    if(registerBtn) registerBtn.style.display='none';
+    area.innerHTML=`<span class="user-chip">${currentUser.role==='seller'?'🏪':'🛒'} ${escapeHtml(currentUser.name)}</span><button class="link-btn" onclick="openDashboard()">Dashboard</button><button class="link-btn messages-nav" onclick="openMessageInbox()">💬 Messages</button><button class="link-btn" onclick="logoutUser()">Logout</button>`;
+  }else{
+    if(loginBtn) loginBtn.style.display='';
+    if(registerBtn) registerBtn.style.display='';
+    area.innerHTML='';
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   MODIFIED: logoutUser releases all cart stock before logging out
+   ═══════════════════════════════════════════════════════════════ */
+async function logoutUser(){
+  try {
+    if(cart.length > 0 && currentUser && currentUser.role === 'buyer'){
+      await api('/api/cart/release-all', {
+        method: 'POST',
+        body: JSON.stringify({ items: cart.map(x => ({ id: x.id, qty: x.qty })) })
+      });
+    }
+  } catch(e){ /* ignore */ }
+
+  cart = [];
+  saveCart();
+  await api('/api/logout', { method: 'POST' });
+  currentUser = null;
+  showToast('Logged out');
+  await loadUser();
+  await loadProducts();
+}
+
 function openDashboard(){if(!currentUser)return openAuth('login');currentUser.role==='seller'?openSellerDashboard():openBuyerDashboard()}
 async function openSellerDashboard(){try{const d=await api('/api/seller/products');const orders=await api('/api/orders');const totalSales=orders.orders.filter(o=>o.payment_status==='Paid'||o.payment_method==='COD').reduce((s,o)=>s+Number(o.total),0);document.getElementById('dashboardContent').innerHTML=`<div class="dashboard-header"><div><h2>Seller Dashboard 🏪</h2><p class="auth-sub">Manage listings, stock and customer orders.</p></div><button class="primary" onclick="showAddProduct()">+ Add product</button></div><div class="stats-grid"><div><b>${d.products.length}</b><small>Listings</small></div><div><b>${orders.orders.length}</b><small>Orders</small></div><div><b>${money(totalSales)}</b><small>Order value</small></div></div><h3 class="dash-title">My products</h3><div class="dash-list">${d.products.length?d.products.map(p=>`<div class="dash-row product-dash-row">${imageHtml(p,'dash-image')}<span><b>${escapeHtml(p.name)}</b><small>${money(p.price)} · Stock ${p.stock} · ${escapeHtml(p.category)}</small></span><button class="danger" onclick="deleteProduct(${p.id})">Delete</button></div>`).join(''):'<div class="empty">No products yet.</div>'}</div><h3 class="dash-title">Order management</h3><div class="dash-list">${orders.orders.length?orders.orders.map(o=>`<div class="dash-row"><span><b>Order #${o.id}</b><small>${escapeHtml(o.buyer_name)} · ${money(o.total)} · ${o.payment_method} · Payment: ${o.payment_status}</small></span><select onchange="updateOrderStatus(${o.id},this.value)">${['Pending','Confirmed','Ready','Delivered','Cancelled'].map(s=>`<option ${s===o.status?'selected':''}>${s}</option>`).join('')}</select></div>`).join(''):'<div class="empty">No orders yet.</div>'}</div>`;document.getElementById('dashboardOverlay').classList.add('open')}catch(e){showToast(e.message)}}
 async function openBuyerDashboard(){if(!currentUser)return openAuth('login');try{const d=await api('/api/orders');const paid=d.orders.filter(o=>o.payment_status==='Paid'||o.payment_method==='COD').length;document.getElementById('dashboardContent').innerHTML=`<div class="dashboard-header"><div><h2>Buyer Dashboard 🛍️</h2><p class="auth-sub">Welcome, ${escapeHtml(currentUser.name)}. Track purchases and payments.</p></div><button class="secondary" onclick="openCart()">Open cart (${cart.reduce((s,x)=>s+x.qty,0)})</button></div><div class="stats-grid"><div><b>${d.orders.length}</b><small>Total orders</small></div><div><b>${paid}</b><small>Paid orders</small></div><div><b>${money(d.orders.reduce((s,o)=>s+Number(o.total),0))}</b><small>Total spend</small></div></div><h3 class="dash-title">My orders</h3>${d.orders.length?d.orders.map(o=>orderCard(o)).join(''):'<div class="empty">You have no orders yet. <button class="primary" onclick="closeDashboard();document.getElementById(\'products\').scrollIntoView()">Shop now</button></div>'}`;document.getElementById('dashboardOverlay').classList.add('open')}catch(e){showToast(e.message)}}
@@ -65,7 +165,15 @@ async function editProfile(){if(!currentUser)return;dashboardContent.innerHTML=`
 async function saveProfile(e){e.preventDefault();try{await api('/api/profile',{method:'PATCH',body:JSON.stringify({name:profileName.value})});await loadUser();showToast('Profile updated');closeDashboard()}catch(e){showToast(e.message)}}
 function toggleDark(){document.body.classList.toggle('dark');localStorage.setItem('campusDark',document.body.classList.contains('dark'))}
 if(localStorage.getItem('campusDark')==='true')document.body.classList.add('dark');
-const oldLoadUser=loadUser;loadUser=async function(){await oldLoadUser();if(currentUser){await loadWishlist();userArea.innerHTML+=`<button class="link-btn" onclick="openWishlist()">♡ Wishlist</button><button class="link-btn" onclick="editProfile()">Profile</button>`}renderProducts()}
+const oldLoadUser=loadUser;
+loadUser=async function(){
+  await oldLoadUser();
+  if(currentUser){
+    await loadWishlist();
+    userArea.innerHTML+=`<button class="link-btn" onclick="openWishlist()">♡ Wishlist</button><button class="link-btn" onclick="editProfile()">Profile</button>`;
+  }
+  renderProducts();
+};
 document.querySelector('.nav-actions').insertAdjacentHTML('beforeend','<button class="link-btn" onclick="toggleDark()">🌙</button>');
 const oldSeller=openSellerDashboard;openSellerDashboard=async function(){try{const a=await api('/api/seller/analytics');await oldSeller();setTimeout(()=>{const s=document.querySelector('#dashboardContent .stats-grid');if(s)s.insertAdjacentHTML('beforeend',`<div><b>${a.units}</b><small>Units sold</small></div><div><b>${money(a.revenue)}</b><small>Revenue</small></div>`)},0)}catch(e){await oldSeller()}}
 // ===== Ultimate Upgrade UI =====
@@ -76,7 +184,6 @@ const oldOpenCheckout=openCheckout;openCheckout=function(){oldOpenCheckout();che
 async function ultimateChat(id,pid){if(!currentUser)return openAuth('login');let msg=prompt('Message to seller:');if(!msg)return;try{await api('/api/messages',{method:'POST',body:JSON.stringify({receiver_id:id,product_id:pid,body:msg})});showToast('Message sent 💬')}catch(e){showToast(e.message)}}
 async function ultimateCoupon(){let code=prompt('Coupon code (try CAMPUS10):');if(!code)return;try{let d=await api('/api/coupons/validate',{method:'POST',body:JSON.stringify({code,total:cart.reduce((s,x)=>s+x.price*x.qty,0)})});showToast(`Coupon applied! Save ${money(d.discount)} · New total ${money(d.total)}`)}catch(e){showToast(e.message)}}
 
-
 // ===== Daraz-style Phase 3 UI =====
 function toggleFilters(){filterPanel.classList.toggle('open')}
 async function openAddresses(){if(!currentUser)return openAuth('login');try{let d=await api('/api/addresses');dashboardContent.innerHTML=`<h2>📍 Delivery addresses</h2><form class="auth-form" onsubmit="saveAddress(event)"><input id="addrLabel" placeholder="Home / Hostel" required><textarea id="addrFull" placeholder="Complete address" required></textarea><input id="addrPhone" placeholder="Phone number"><input id="addrCity" placeholder="City"><button class="primary">Save address</button></form><div class="dash-list">${d.addresses.map(a=>`<div class="dash-row"><span><b>${escapeHtml(a.label)}</b><small>${escapeHtml(a.full_address)} · ${escapeHtml(a.city||'')}</small></span></div>`).join('')||'<div class="empty">No saved addresses.</div>'}</div>`;dashboardOverlay.classList.add('open')}catch(e){showToast(e.message)}}
@@ -84,7 +191,6 @@ async function saveAddress(e){e.preventDefault();try{await api('/api/addresses',
 async function openStoreSetup(){if(!currentUser)return openAuth('login');if(currentUser.role!=='seller')return showToast('Seller account required');dashboardContent.innerHTML=`<h2>🏪 Store settings</h2><form class="auth-form" onsubmit="saveStore(event)"><input id="storeName" placeholder="Store name" required><textarea id="storeDesc" placeholder="Tell buyers about your store"></textarea><button class="primary">Save store</button></form>`;dashboardOverlay.classList.add('open')}
 async function saveStore(e){e.preventDefault();try{await api('/api/store',{method:'POST',body:JSON.stringify({store_name:storeName.value,description:storeDesc.value})});showToast('Store saved')}catch(e){showToast(e.message)}}
 async function openStore(sid){try{let d=await api('/api/stores/'+sid);dashboardContent.innerHTML=`<h2>🏪 ${escapeHtml(d.store.store_name)}</h2><p>${escapeHtml(d.store.description||'')}</p><h3>Products</h3><div class="dash-list">${d.products.map(p=>`<div class="dash-row"><span><b>${escapeHtml(p.name)}</b><small>${money(p.price)} · Stock ${p.stock}</small></span><button class="add" onclick="addToCart(${p.id})">Add</button></div>`).join('')||'No products yet.'}</div>`;dashboardOverlay.classList.add('open')}catch(e){showToast(e.message)}}
-
 
 // ===== Reliable messaging system =====
 let chatContacts={};
@@ -130,15 +236,9 @@ async function sendChat(e,to,pid){
  try{await api('/api/messages',{method:'POST',body:JSON.stringify({receiver_id:Number(to),product_id:pid||null,body})});if(input)input.value='';showToast('Message saved successfully 💬');await openChat(to,pid)}
  catch(err){showToast('Message was not sent: '+err.message);if(button){button.disabled=false;button.textContent='Send'}}
 }
-// Dashboard overrides with message shortcuts
 openSellerDashboard=async function(){try{const [p,o,a]=await Promise.all([api('/api/seller/products'),api('/api/orders'),api('/api/seller/analytics')]);const orders=o.orders||[];dashboardContent.innerHTML=`<div class="dashboard-header"><div><h2>Seller Dashboard 🏪</h2><p class="auth-sub">See who ordered your products and manage customer messages.</p></div><div><button class="secondary" onclick="openMessageInbox()">💬 Messages</button> <button class="primary" onclick="showAddProduct()">+ Add product</button></div></div><div class="stats-grid"><div><b>${p.products.length}</b><small>Listings</small></div><div><b>${orders.length}</b><small>Customer orders</small></div><div><b>${money(a.revenue)}</b><small>Revenue</small></div><div><b>${a.units}</b><small>Units sold</small></div></div><h3 class="dash-title">Customer orders</h3><div class="dash-list">${orders.length?orders.map(x=>`<div class="order-card seller-order"><div><b>Order #${x.id} · ${escapeHtml(x.buyer_name)}</b><span class="status">${escapeHtml(x.status)}</span></div><small>👤 Buyer: ${escapeHtml(x.buyer_name)} · ✉ ${escapeHtml(x.buyer_email||'')}</small><small>💰 Your value: ${money(x.seller_total||x.total)} · ${escapeHtml(x.payment_method)} · ${escapeHtml(x.payment_status)}</small><div class="order-actions"><button class="secondary" onclick="openChat(${x.buyer_id})">💬 Chat buyer</button></div></div>`).join(''):'<div class="empty">No customer orders yet.</div>'}</div><h3 class="dash-title">My products</h3><div class="dash-list">${p.products.map(x=>`<div class="dash-row"><span><b>${escapeHtml(x.name)}</b><small>${money(x.price)} · Stock ${x.stock}</small></span><button class="danger" onclick="deleteProduct(${x.id})">Delete</button></div>`).join('')||'<div class="empty">No products yet.</div>'}</div>`;dashboardOverlay.classList.add('open')}catch(e){showToast(e.message)}};
 openBuyerDashboard=async function(){if(!currentUser)return openAuth('login');try{const d=await api('/api/orders');dashboardContent.innerHTML=`<div class="dashboard-header"><div><h2>Buyer Dashboard 🛍️</h2><p class="auth-sub">Track orders and message sellers.</p></div><button class="secondary" onclick="openMessageInbox()">💬 Messages</button></div><h3 class="dash-title">My orders</h3><div class="dash-list">${d.orders.length?d.orders.map(o=>`<div class="order-card"><div><b>Order #${o.id}</b><span class="status">${escapeHtml(o.status)}</span></div><small>${chatTime(o.created_at)} · ${escapeHtml(o.payment_method)} · ${money(o.total)}</small><div class="order-items">${(o.items||[]).map(i=>`${i.icon||'📦'} ${escapeHtml(i.name)} × ${i.quantity} · Seller: ${escapeHtml(i.seller_name||'CampusCart')} ${i.seller_id?`<button class="link-btn" onclick="openChat(${i.seller_id},${i.product_id})">💬 Chat seller</button>`:''}`).join('<br>')}</div></div>`).join(''):'<div class="empty">You have no orders yet.</div>'}</div>`;dashboardOverlay.classList.add('open')}catch(e){showToast(e.message)}};
 
-
-/* ═══════════════════════════════════════════════════════════════
-   Homepage Upgrade: hero mini-cards + fresh listings
-   Appended after all existing code. Overrides loadProducts safely.
-   ═══════════════════════════════════════════════════════════════ */
 (function () {
   const originalLoad = loadProducts;
   loadProducts = async function () {
@@ -148,7 +248,6 @@ openBuyerDashboard=async function(){if(!currentUser)return openAuth('login');try
       renderFreshListings();
     } catch (e) { console.warn('Homepage upgrade failed:', e); }
   };
-  // Run once on load
   setTimeout(function () { loadProducts(); }, 100);
 })();
 
