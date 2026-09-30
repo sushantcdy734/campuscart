@@ -256,8 +256,8 @@ openBuyerDashboard=async function(){
                     actionButtons += `<button class="danger" onclick="cancelOrder(${o.id})" style="margin-right:10px;">Cancel Order</button>`;
                 }
                 
-                // 2. Show Pay Now button if payment is incomplete
-                if(o.payment_status === 'Payment Pending' || o.payment_status === 'Initiated' || o.payment_status === 'Failed') {
+                // 2. Show Pay Now button if payment is incomplete AND the order is not cancelled
+                if((o.payment_status === 'Payment Pending' || o.payment_status === 'Initiated' || o.payment_status === 'Failed') && o.status !== 'Cancelled') {
                     actionButtons += `<button class="primary" onclick="retryPayment(${o.id}, '${o.payment_method}')" style="margin-right:10px;">Pay Now</button>`;
                 }
 
