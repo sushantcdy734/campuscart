@@ -296,8 +296,13 @@ openBuyerDashboard=async function(){
                 if(o.status === 'Pending') {
                     actionButtons += `<button class="danger" onclick="cancelOrder(${o.id})" style="margin-right:10px;">Cancel Order</button>`;
                 }
+
+                // 2. Show Confirm Delivery button if the seller marked it as Ready
+                if(o.status === 'Ready') {
+                    actionButtons += `<button class="primary" onclick="confirmDelivery(${o.id})" style="margin-right:10px; background-color: #10b981;">✅ Confirm Delivery</button>`;
+                }
                 
-                // 2. Show Pay Now button if payment is incomplete AND the order is not cancelled
+                // 3. Show Pay Now button if payment is incomplete AND the order is not cancelled
                 if((o.payment_status === 'Payment Pending' || o.payment_status === 'Initiated' || o.payment_status === 'Failed') && o.status !== 'Cancelled') {
                     actionButtons += `<button class="primary" onclick="retryPayment(${o.id}, '${o.payment_method}')" style="margin-right:10px;">Pay Now</button>`;
                 }
@@ -317,7 +322,7 @@ openBuyerDashboard=async function(){
     }catch(e){showToast(e.message)}
 };
 
-// ===== NEW: Cancel and Repay Functions =====
+// ===== NEW: Cancel, Confirm Delivery, and Repay Functions =====
 
 async function cancelOrder(orderId) {
     if(!confirm("Are you sure you want to cancel this order? This cannot be undone.")) return;
@@ -325,6 +330,17 @@ async function cancelOrder(orderId) {
         await api(`/api/orders/${orderId}/cancel`, { method: 'POST' });
         showToast('Order cancelled successfully');
         openBuyerDashboard(); // Refresh the dashboard
+    } catch(e) {
+        showToast(e.message);
+    }
+}
+
+async function confirmDelivery(orderId) {
+    if(!confirm("Have you received your product? This will mark the order as Delivered.")) return;
+    try {
+        await api(`/api/orders/${orderId}/confirm-delivery`, { method: 'POST' });
+        showToast('Order marked as Delivered! Thank you.');
+        openBuyerDashboard(); // Refresh the dashboard to show the new status
     } catch(e) {
         showToast(e.message);
     }
