@@ -139,8 +139,6 @@ async function logoutUser(){
 }
 
 function openDashboard(){if(!currentUser)return openAuth('login');currentUser.role==='seller'?openSellerDashboard():openBuyerDashboard()}
-async function openSellerDashboard(){try{const d=await api('/api/seller/products');const orders=await api('/api/orders');const totalSales=orders.orders.filter(o=>o.payment_status==='Paid'||o.payment_method==='COD').reduce((s,o)=>s+Number(o.total),0);document.getElementById('dashboardContent').innerHTML=`<div class="dashboard-header"><div><h2>Seller Dashboard 🏪</h2><p class="auth-sub">Manage listings, stock and customer orders.</p></div><button class="primary" onclick="showAddProduct()">+ Add product</button></div><div class="stats-grid"><div><b>${d.products.length}</b><small>Listings</small></div><div><b>${orders.orders.length}</b><small>Orders</small></div><div><b>${money(totalSales)}</b><small>Order value</small></div></div><h3 class="dash-title">My products</h3><div class="dash-list">${d.products.length?d.products.map(p=>`<div class="dash-row product-dash-row">${imageHtml(p,'dash-image')}<span><b>${escapeHtml(p.name)}</b><small>${money(p.price)} · Stock ${p.stock} · ${escapeHtml(p.category)}</small></span><button class="danger" onclick="deleteProduct(${p.id})">Delete</button></div>`).join(''):'<div class="empty">No products yet.</div>'}</div><h3 class="dash-title">Order management</h3><div class="dash-list">${orders.orders.length?orders.orders.map(o=>`<div class="dash-row"><span><b>Order #${o.id}</b><small>${escapeHtml(o.buyer_name)} · ${money(o.total)} · ${o.payment_method} · Payment: ${o.payment_status}</small></span><select onchange="updateOrderStatus(${o.id},this.value)">${['Pending','Confirmed','Ready','Delivered','Cancelled'].map(s=>`<option ${s===o.status?'selected':''}>${s}</option>`).join('')}</select></div>`).join(''):'<div class="empty">No orders yet.</div>'}</div>`;document.getElementById('dashboardOverlay').classList.add('open')}catch(e){showToast(e.message)}}
-async function openBuyerDashboard(){if(!currentUser)return openAuth('login');try{const d=await api('/api/orders');const paid=d.orders.filter(o=>o.payment_status==='Paid'||o.payment_method==='COD').length;document.getElementById('dashboardContent').innerHTML=`<div class="dashboard-header"><div><h2>Buyer Dashboard 🛍️</h2><p class="auth-sub">Welcome, ${escapeHtml(currentUser.name)}. Track purchases and payments.</p></div><button class="secondary" onclick="openCart()">Open cart (${cart.reduce((s,x)=>s+x.qty,0)})</button></div><div class="stats-grid"><div><b>${d.orders.length}</b><small>Total orders</small></div><div><b>${paid}</b><small>Paid orders</small></div><div><b>${money(d.orders.reduce((s,o)=>s+Number(o.total),0))}</b><small>Total spend</small></div></div><h3 class="dash-title">My orders</h3>${d.orders.length?d.orders.map(o=>orderCard(o)).join(''):'<div class="empty">You have no orders yet. <button class="primary" onclick="closeDashboard();document.getElementById(\'products\').scrollIntoView()">Shop now</button></div>'}`;document.getElementById('dashboardOverlay').classList.add('open')}catch(e){showToast(e.message)}}
 function orderCard(o){return `<div class="order-card"><div><b>Order #${o.id}</b><span class="status">${escapeHtml(o.status)}</span></div><small>${new Date(o.created_at).toLocaleString()} · ${escapeHtml(o.payment_method)} · Payment: ${escapeHtml(o.payment_status)} · <b>${money(o.total)}</b></small>${o.items?`<div class="order-items">${o.items.map(i=>`${i.icon||'📦'} ${escapeHtml(i.name)} × ${i.quantity}`).join('<br>')}</div>`:''}</div>`}
 function closeDashboard(){document.getElementById('dashboardOverlay').classList.remove('open')}
 function showAddProduct(){document.getElementById('dashboardContent').innerHTML=`<h2>Add a product</h2><p class="auth-sub">Upload a real product photo and publish your listing.</p><form class="auth-form" onsubmit="addProduct(event)"><label>Product name</label><input id="pName" required><label>Category</label><select id="pCategory"><option>Books</option><option>Electronics</option><option>Notes</option><option>Furniture</option><option>Clothing</option><option>Others</option></select><label>Price (Rs.)</label><input id="pPrice" type="number" min="1" step="0.01" required><label>Stock</label><input id="pStock" type="number" min="1" value="1" required><label>Product image</label><input id="pImage" type="file" accept="image/png,image/jpeg,image/webp,image/gif"><small class="field-help">Maximum 8 MB. JPG, PNG, WEBP or GIF.</small><label>Emoji fallback</label><input id="pIcon" value="📦"><label>Description</label><textarea id="pDesc" rows="3" placeholder="Condition, details, pickup..."></textarea><button class="primary">Publish product</button><button type="button" class="secondary" onclick="openSellerDashboard()">Back</button></form>`}
@@ -175,7 +173,6 @@ loadUser=async function(){
   renderProducts();
 };
 document.querySelector('.nav-actions').insertAdjacentHTML('beforeend','<button class="link-btn" onclick="toggleDark()">🌙</button>');
-const oldSeller=openSellerDashboard;openSellerDashboard=async function(){try{const a=await api('/api/seller/analytics');await oldSeller();setTimeout(()=>{const s=document.querySelector('#dashboardContent .stats-grid');if(s)s.insertAdjacentHTML('beforeend',`<div><b>${a.units}</b><small>Units sold</small></div><div><b>${money(a.revenue)}</b><small>Revenue</small></div>`)},0)}catch(e){await oldSeller()}}
 // ===== Ultimate Upgrade UI =====
 async function applyCoupon(){const code=prompt('Enter coupon code (try CAMPUS10)');if(!code)return;try{const total=cart.reduce((s,x)=>s+x.price*x.qty,0),d=await api('/api/coupons/validate',{method:'POST',body:JSON.stringify({code,total})});showToast(`${d.code} applied! You save ${money(d.discount)}. New total ${money(d.total)}`)}catch(e){showToast(e.message)}}
 const ultimateRender=renderProducts;renderProducts=function(){ultimateRender();document.querySelectorAll('.product').forEach((card,i)=>{const p=products.filter(x=>(activeCategory==='All'||x.category===activeCategory)&&((x.name+' '+x.category+' '+(x.description||'')).toLowerCase().includes((searchInput?.value||'').toLowerCase())))[i];if(p&&p.seller_id)card.querySelector('.product-body')?.insertAdjacentHTML('beforeend',`<button class="review-link" onclick="openChat(${p.seller_id},${p.id})">💬 Chat seller</button><button class="review-link" onclick="reportProduct(${p.id})">🚩 Report</button>`)} )}
@@ -236,7 +233,51 @@ async function sendChat(e,to,pid){
  try{await api('/api/messages',{method:'POST',body:JSON.stringify({receiver_id:Number(to),product_id:pid||null,body})});if(input)input.value='';showToast('Message saved successfully 💬');await openChat(to,pid)}
  catch(err){showToast('Message was not sent: '+err.message);if(button){button.disabled=false;button.textContent='Send'}}
 }
-openSellerDashboard=async function(){try{const [p,o,a]=await Promise.all([api('/api/seller/products'),api('/api/orders'),api('/api/seller/analytics')]);const orders=o.orders||[];dashboardContent.innerHTML=`<div class="dashboard-header"><div><h2>Seller Dashboard 🏪</h2><p class="auth-sub">See who ordered your products and manage customer messages.</p></div><div><button class="secondary" onclick="openMessageInbox()">💬 Messages</button> <button class="primary" onclick="showAddProduct()">+ Add product</button></div></div><div class="stats-grid"><div><b>${p.products.length}</b><small>Listings</small></div><div><b>${orders.length}</b><small>Customer orders</small></div><div><b>${money(a.revenue)}</b><small>Revenue</small></div><div><b>${a.units}</b><small>Units sold</small></div></div><h3 class="dash-title">Customer orders</h3><div class="dash-list">${orders.length?orders.map(x=>`<div class="order-card seller-order"><div><b>Order #${x.id} · ${escapeHtml(x.buyer_name)}</b><span class="status">${escapeHtml(x.status)}</span></div><small>👤 Buyer: ${escapeHtml(x.buyer_name)} · ✉ ${escapeHtml(x.buyer_email||'')}</small><small>💰 Your value: ${money(x.seller_total||x.total)} · ${escapeHtml(x.payment_method)} · ${escapeHtml(x.payment_status)}</small><div class="order-actions"><button class="secondary" onclick="openChat(${x.buyer_id})">💬 Chat buyer</button></div></div>`).join(''):'<div class="empty">No customer orders yet.</div>'}</div><h3 class="dash-title">My products</h3><div class="dash-list">${p.products.map(x=>`<div class="dash-row"><span><b>${escapeHtml(x.name)}</b><small>${money(x.price)} · Stock ${x.stock}</small></span><button class="danger" onclick="deleteProduct(${x.id})">Delete</button></div>`).join('')||'<div class="empty">No products yet.</div>'}</div>`;dashboardOverlay.classList.add('open')}catch(e){showToast(e.message)}};
+
+// ═══════════════════════════════════════════════════════════════
+//  FINAL DEFINITIONS OF DASHBOARD FUNCTIONS (These override all previous versions)
+// ═══════════════════════════════════════════════════════════════
+
+openSellerDashboard=async function(){
+    try{
+        const [p,o,a]=await Promise.all([api('/api/seller/products'),api('/api/orders'),api('/api/seller/analytics')]);
+        const orders=o.orders||[];
+        dashboardContent.innerHTML=`
+        <div class="dashboard-header">
+            <div><h2>Seller Dashboard 🏪</h2><p class="auth-sub">See who ordered your products and manage customer messages.</p></div>
+            <div><button class="secondary" onclick="openMessageInbox()">💬 Messages</button> <button class="primary" onclick="showAddProduct()">+ Add product</button></div>
+        </div>
+        <div class="stats-grid">
+            <div><b>${p.products.length}</b><small>Listings</small></div>
+            <div><b>${orders.length}</b><small>Customer orders</small></div>
+            <div><b>${money(a.revenue)}</b><small>Revenue</small></div>
+            <div><b>${a.units}</b><small>Units sold</small></div>
+        </div>
+        <h3 class="dash-title">Customer orders</h3>
+        <div class="dash-list">
+            ${orders.length ? orders.map(x=>`
+                <div class="order-card seller-order">
+                    <div><b>Order #${x.id} · ${escapeHtml(x.buyer_name)}</b><span class="status">${escapeHtml(x.status)}</span></div>
+                    
+                    <small>📅 <b>Time:</b> ${chatTime(x.created_at)}</small>
+                    <small>👤 <b>Buyer:</b> ${escapeHtml(x.buyer_name)} · ✉ ${escapeHtml(x.buyer_email||'')}</small>
+                    <small>💰 <b>Total:</b> ${money(x.total)} (Your share: ${money(x.seller_total||x.total)})</small>
+                    <small>💳 <b>Payment:</b> ${escapeHtml(x.payment_method)} · ${escapeHtml(x.payment_status)}</small>
+                    
+                    <div class="order-actions" style="margin-top: 15px; display: flex; gap: 10px; align-items: center; border-top: 1px solid #eee; padding-top: 10px;">
+                        <button class="secondary" onclick="openChat(${x.buyer_id})">💬 Chat buyer</button>
+                        <label style="font-size: 14px; color: var(--text-muted);">Delivery Status:</label>
+                        <select onchange="updateOrderStatus(${x.id}, this.value)" style="padding: 8px; border-radius: 6px; border: 1px solid #ccc; background: transparent; color: inherit;">
+                            ${['Pending','Confirmed','Ready','Delivered','Cancelled'].map(s=>`<option ${s===x.status?'selected':''}>${s}</option>`).join('')}
+                        </select>
+                    </div>
+                </div>
+            `).join('') : '<div class="empty">No customer orders yet.</div>'}
+        </div>`;
+        dashboardOverlay.classList.add('open');
+    }catch(e){showToast(e.message)}
+};
+
 openBuyerDashboard=async function(){
     if(!currentUser)return openAuth('login');
     try{
@@ -275,6 +316,58 @@ openBuyerDashboard=async function(){
         dashboardOverlay.classList.add('open');
     }catch(e){showToast(e.message)}
 };
+
+// ===== NEW: Cancel and Repay Functions =====
+
+async function cancelOrder(orderId) {
+    if(!confirm("Are you sure you want to cancel this order? This cannot be undone.")) return;
+    try {
+        await api(`/api/orders/${orderId}/cancel`, { method: 'POST' });
+        showToast('Order cancelled successfully');
+        openBuyerDashboard(); // Refresh the dashboard
+    } catch(e) {
+        showToast(e.message);
+    }
+}
+
+async function retryPayment(orderId, method) {
+    try {
+        // Ask backend to generate a new payment token/URL
+        const d = await api(`/api/orders/${orderId}/repay`, { 
+            method: 'POST',
+            body: JSON.stringify({ payment_method: method })
+        });
+        
+        // Handle Khalti Redirect
+        if(d.payment === 'redirect' && d.provider === 'Khalti') {
+            window.location.href = d.payment_url;
+            return;
+        }
+        
+        // Handle eSewa Form Submission
+        if(d.payment === 'redirect' && d.provider === 'eSewa') {
+            const form = document.createElement('form');
+            form.method = 'POST';
+            form.action = d.action;
+            Object.entries(d.fields).forEach(([k,v]) => {
+                const input = document.createElement('input');
+                input.type = 'hidden'; 
+                input.name = k; 
+                input.value = v; 
+                form.appendChild(input);
+            });
+            document.body.appendChild(form);
+            form.submit();
+            return;
+        }
+    } catch(e) {
+        showToast(e.message);
+    }
+}
+
+function viewOrderDetails(orderId) {
+    showToast(`Viewing details for Order #${orderId}`);
+}
 
 (function () {
   const originalLoad = loadProducts;
@@ -360,56 +453,4 @@ function scrollToProduct(id) {
       setTimeout(function () { card.style.outline = ''; }, 1500);
     }
   }, 400);
-}
-
-// ===== NEW: Cancel and Repay Functions =====
-
-async function cancelOrder(orderId) {
-    if(!confirm("Are you sure you want to cancel this order? This cannot be undone.")) return;
-    try {
-        await api(`/api/orders/${orderId}/cancel`, { method: 'POST' });
-        showToast('Order cancelled successfully');
-        openBuyerDashboard(); // Refresh the dashboard
-    } catch(e) {
-        showToast(e.message);
-    }
-}
-
-async function retryPayment(orderId, method) {
-    try {
-        // Ask backend to generate a new payment token/URL
-        const d = await api(`/api/orders/${orderId}/repay`, { 
-            method: 'POST',
-            body: JSON.stringify({ payment_method: method })
-        });
-        
-        // Handle Khalti Redirect
-        if(d.payment === 'redirect' && d.provider === 'Khalti') {
-            window.location.href = d.payment_url;
-            return;
-        }
-        
-        // Handle eSewa Form Submission
-        if(d.payment === 'redirect' && d.provider === 'eSewa') {
-            const form = document.createElement('form');
-            form.method = 'POST';
-            form.action = d.action;
-            Object.entries(d.fields).forEach(([k,v]) => {
-                const input = document.createElement('input');
-                input.type = 'hidden'; 
-                input.name = k; 
-                input.value = v; 
-                form.appendChild(input);
-            });
-            document.body.appendChild(form);
-            form.submit();
-            return;
-        }
-    } catch(e) {
-        showToast(e.message);
-    }
-}
-
-function viewOrderDetails(orderId) {
-    showToast(`Viewing details for Order #${orderId}`);
 }
