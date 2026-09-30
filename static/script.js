@@ -472,15 +472,16 @@ function scrollToProduct(id) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  LIVE SELLER NOTIFICATION SYSTEM (Polls every 15 seconds)
+//  LIVE SELLER NOTIFICATION SYSTEM (Polls every 5 seconds)
 // ═══════════════════════════════════════════════════════════════
 
-// Track the highest Order ID the seller has seen so far
-let lastKnownOrderId = null;
+// Remember the last order ID the seller has seen in this browser
+let lastKnownOrderId = parseInt(localStorage.getItem('sellerLastSeenOrderId') || '0');
 
-// Custom Pop-Up Modal for New Orders
 function showNewOrderModal(order) {
-    // 1. Create the modal HTML
+    // Prevent duplicate popups
+    if (document.getElementById('newOrderPopup')) return;
+
     const itemsHtml = (order.items || []).map(i => 
         `<li style="display:flex; justify-content:space-between; margin-bottom:5px;">
             <span>${i.icon || '📦'} ${i.name} × ${i.quantity}</span>
@@ -549,39 +550,34 @@ async function checkForNewOrders() {
     if (!currentUser || currentUser.role !== 'seller') return;
     
     try {
-        // 2. Fetch the latest orders
         const d = await api('/api/orders');
         if (!d.orders || d.orders.length === 0) return;
 
-        // 3. Find the highest Order ID in the list
-        const maxOrderId = Math.max(...d.orders.map(o => o.id));
+        // Sort orders descending to get the newest first
+        d.orders.sort((a, b) => b.id - a.id);
+        const newestOrder = d.orders[0];
 
-        // 4. Initialize on first check (baseline setup)
-        if (lastKnownOrderId === null) {
-            lastKnownOrderId = maxOrderId;
-            return;
-        }
-
-        // 5. If a newer Order ID is found, alert the seller!
-        if (maxOrderId > lastKnownOrderId) {
-            // Find all the new orders
-            const newOrders = d.orders.filter(o => o.id > lastKnownOrderId);
-            
-            if (newOrders.length > 0) {
-                // Sort newest first
-                newOrders.sort((a, b) => b.id - a.id);
-                
-                // Show the pop-up for the newest order
-                showNewOrderModal(newOrders[0]);
-                
-                // If the seller dashboard is currently open, refresh it silently in the background
-                if (document.getElementById('dashboardOverlay').classList.contains('open')) {
-                    openSellerDashboard();
+        // If a newer Order ID is found compared to what we remembered, alert the seller!
+        if (newestOrder.id > lastKnownOrderId) {
+            // If it's the very first time (0), only show popup if the order is recent (less than 1 day old)
+            if (lastKnownOrderId === 0) {
+                const orderAgeHours = (new Date() - new Date(newestOrder.created_at)) / 1000 / 60 / 60;
+                if (orderAgeHours < 24) {
+                    showNewOrderModal(newestOrder);
                 }
+            } else {
+                // Otherwise, definitely show it for any new order
+                showNewOrderModal(newestOrder);
             }
             
-            // Update the local storage to prevent duplicate alerts
-            lastKnownOrderId = maxOrderId;
+            // Remember this order ID in the browser's localStorage
+            localStorage.setItem('sellerLastSeenOrderId', newestOrder.id);
+            lastKnownOrderId = newestOrder.id;
+            
+            // If the seller dashboard is currently open, refresh it silently
+            if (document.getElementById('dashboardOverlay').classList.contains('open')) {
+                openSellerDashboard();
+            }
         }
         
     } catch (e) {
@@ -589,17 +585,14 @@ async function checkForNewOrders() {
     }
 }
 
-// Check for new orders every 15 seconds (15000 milliseconds)
-setInterval(checkForNewOrders, 15000);
+// Check for new orders every 5 seconds (5000 milliseconds)
+setInterval(checkForNewOrders, 5000);
 
-// Reset the tracker when a seller logs in fresh
+// Run a check immediately when the user logs in
 const originalLoadUserForNotify = loadUser;
 loadUser = async function() {
     await originalLoadUserForNotify();
     if (currentUser && currentUser.role === 'seller') {
-        // Don't reset completely, just make sure we have a baseline
-        if (lastKnownOrderId === null) {
-            checkForNewOrders();
-        }
+        checkForNewOrders();
     }
 };
