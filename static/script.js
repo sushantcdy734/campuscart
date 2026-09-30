@@ -21,37 +21,18 @@ function renderProducts(){
 }
 function filterCategory(c){activeCategory=c;document.getElementById('products').scrollIntoView({behavior:'smooth'});renderProducts()}
 
-/* ═══════════════════════════════════════════════════════════════
-   MODIFIED: addToCart reserves stock on the server
-   ═══════════════════════════════════════════════════════════════ */
 async function addToCart(id){
   const p = products.find(x => x.id === id);
   if(!p) return;
-
-  if(!currentUser){
-    showToast('Please log in to add items to cart');
-    return openAuth('login');
-  }
-
+  if(!currentUser){ showToast('Please log in to add items to cart'); return openAuth('login'); }
   const item = cart.find(x => x.id === id);
   const currentQty = item ? item.qty : 0;
-  if(currentQty >= p.stock){
-    return showToast('Maximum available stock reached');
-  }
-
+  if(currentQty >= p.stock){ return showToast('Maximum available stock reached'); }
   try {
-    const res = await api('/api/cart/reserve', {
-      method: 'POST',
-      body: JSON.stringify({ product_id: id, qty: 1 })
-    });
+    const res = await api('/api/cart/reserve', { method: 'POST', body: JSON.stringify({ product_id: id, qty: 1 }) });
     p.stock = res.new_stock;
-  } catch(e){
-    return showToast(e.message);
-  }
-
-  if(item) item.qty++;
-  else cart.push({...p, qty: 1});
-
+  } catch(e){ return showToast(e.message); }
+  if(item) item.qty++; else cart.push({...p, qty: 1});
   saveCart();
   if(typeof renderProducts === 'function') renderProducts();
   if(typeof renderFreshListings === 'function') renderFreshListings();
@@ -62,27 +43,15 @@ function saveCart(){localStorage.setItem('campusCart',JSON.stringify(cart));upda
 function updateCart(){document.getElementById('cartCount').textContent=cart.reduce((s,x)=>s+x.qty,0)}
 function renderCart(){const el=document.getElementById('cartItems');if(!cart.length){el.innerHTML='<div class="empty">🛒<br><br>Your cart is empty.</div>';document.getElementById('cartTotal').textContent=money(0);return}el.innerHTML=cart.map(x=>`<div class="cart-item">${imageHtml(x,'cart-icon')}<div style="flex:1"><h4>${escapeHtml(x.name)}</h4><small>${money(x.price)} × ${x.qty}</small></div><button class="add" onclick="removeOne(${x.id})">−</button></div>`).join('');document.getElementById('cartTotal').textContent=money(cart.reduce((s,x)=>s+x.price*x.qty,0))}
 
-/* ═══════════════════════════════════════════════════════════════
-   MODIFIED: removeOne releases reserved stock
-   ═══════════════════════════════════════════════════════════════ */
 async function removeOne(id){
   const item = cart.find(a => a.id === id);
   if(!item) return;
-
   try {
-    const res = await api('/api/cart/release', {
-      method: 'POST',
-      body: JSON.stringify({ product_id: id, qty: 1 })
-    });
+    const res = await api('/api/cart/release', { method: 'POST', body: JSON.stringify({ product_id: id, qty: 1 }) });
     const p = products.find(x => x.id === id);
     if(p) p.stock = res.new_stock;
-  } catch(e){
-    // Continue with local cart change even if release fails
-  }
-
-  if(item.qty > 1) item.qty--;
-  else cart = cart.filter(a => a.id !== id);
-
+  } catch(e){}
+  if(item.qty > 1) item.qty--; else cart = cart.filter(a => a.id !== id);
   saveCart();
   if(typeof renderProducts === 'function') renderProducts();
   if(typeof renderFreshListings === 'function') renderFreshListings();
@@ -91,9 +60,46 @@ async function removeOne(id){
 function openCart(){document.getElementById('cartPanel').classList.add('open');document.getElementById('overlay').classList.add('open');renderCart()}
 function closeCart(){document.getElementById('cartPanel').classList.remove('open');document.getElementById('overlay').classList.remove('open')}
 async function checkout(){if(!cart.length)return showToast('Your cart is empty');if(!currentUser)return openAuth('login');if(currentUser.role!=='buyer')return showToast('Only buyers can place orders');openCheckout()}
-function openCheckout(){document.getElementById('checkoutContent').innerHTML=`<h2>Secure checkout</h2><p class="auth-sub">Payments are verified server-to-server before an order is marked paid.</p><div class="payment-grid"><button onclick="placeOrder('eSewa')">💚<b>eSewa</b><small>Secure gateway</small></button><button onclick="placeOrder('Khalti')">💜<b>Khalti</b><small>Secure gateway</small></button><button onclick="placeOrder('COD')">📦<b>Cash on Delivery</b><small>Pay when received</small></button></div><div class="checkout-total">Total: <b>${money(cart.reduce((s,x)=>s+x.price*x.qty,0))}</b></div>`;document.getElementById('checkoutOverlay').classList.add('open')}
+
+function openCheckout(){
+    document.getElementById('checkoutContent').innerHTML=`
+    <h2>Secure checkout</h2>
+    <p class="auth-sub">Payments are verified server-to-server before an order is marked paid.</p>
+    <div style="margin-bottom: 15px; text-align: left;">
+        <label style="display:block; margin-bottom:5px; font-weight:bold;">📍 Delivery Location / Address</label>
+        <textarea id="checkoutLocation" placeholder="Enter your hostel, room number, or complete delivery address..." required style="width:100%; padding:10px; border-radius:6px; border:1px solid #ccc; min-height: 60px;"></textarea>
+    </div>
+    <div class="payment-grid">
+        <button onclick="placeOrder('eSewa')">💚<b>eSewa</b><small>Secure gateway</small></button>
+        <button onclick="placeOrder('Khalti')">💜<b>Khalti</b><small>Secure gateway</small></button>
+        <button onclick="placeOrder('COD')">📦<b>Cash on Delivery</b><small>Pay when received</small></button>
+    </div>
+    <div class="checkout-total">Total: <b>${money(cart.reduce((s,x)=>s+x.price*x.qty,0))}</b></div>`;
+    document.getElementById('checkoutOverlay').classList.add('open')
+}
 function closeCheckout(){document.getElementById('checkoutOverlay').classList.remove('open')}
-async function placeOrder(method){try{const d=await api('/api/checkout',{method:'POST',body:JSON.stringify({payment_method:method,items:cart.map(x=>({id:x.id,qty:x.qty}))})});if(d.payment==='redirect'&&d.provider==='Khalti'){window.location.href=d.payment_url;return}if(d.payment==='redirect'&&d.provider==='eSewa'){const form=document.createElement('form');form.method='POST';form.action=d.action;Object.entries(d.fields).forEach(([k,v])=>{const input=document.createElement('input');input.type='hidden';input.name=k;input.value=v;form.appendChild(input)});document.body.appendChild(form);form.submit();return}cart=[];saveCart();closeCheckout();closeCart();showToast(`Order #${d.order_id} placed`);loadProducts();openBuyerDashboard()}catch(e){showToast(e.message)}}
+
+async function placeOrder(method){
+    const location = document.getElementById('checkoutLocation')?.value.trim();
+    if(!location) return showToast('Please enter a delivery location/address.');
+    try{
+        const d=await api('/api/checkout',{
+            method:'POST',
+            body:JSON.stringify({
+                payment_method:method,
+                delivery_location: location,
+                items:cart.map(x=>({id:x.id,qty:x.qty}))
+            })
+        });
+        if(d.payment==='redirect'&&d.provider==='Khalti'){window.location.href=d.payment_url;return}
+        if(d.payment==='redirect'&&d.provider==='eSewa'){
+            const form=document.createElement('form');form.method='POST';form.action=d.action;
+            Object.entries(d.fields).forEach(([k,v])=>{const input=document.createElement('input');input.type='hidden';input.name=k;input.value=v;form.appendChild(input)});
+            document.body.appendChild(form);form.submit();return
+        }
+        cart=[];saveCart();closeCheckout();closeCart();showToast(`Order #${d.order_id} placed`);loadProducts();openBuyerDashboard()
+    }catch(e){showToast(e.message)}
+}
 function openAuth(mode){const box=document.getElementById('authContent');box.innerHTML=mode==='login'?`<h2>Welcome back 👋</h2><p class="auth-sub">Login as a CampusCart buyer or seller.</p><form class="auth-form" onsubmit="loginUser(event)"><label>Email</label><input id="loginEmail" type="email" required placeholder="you@example.com"><label>Password</label><input id="loginPassword" type="password" required><button class="primary" type="submit">Login</button></form><div class="auth-switch">New here? <button onclick="openAuth('register')">Create an account</button></div>`:`<h2>Create your account</h2><p class="auth-sub">Choose how you will use CampusCart.</p><form class="auth-form" onsubmit="registerUser(event)"><label>Full name</label><input id="regName" required placeholder="Your name"><label>Email</label><input id="regEmail" type="email" required placeholder="you@example.com"><label>Password</label><input id="regPassword" type="password" minlength="6" required placeholder="At least 6 characters"><label>Account type</label><div class="role-grid"><button type="button" class="role-option active" id="buyerRole" onclick="selectRole('buyer')">🛒 Buyer</button><button type="button" class="role-option" id="sellerRole" onclick="selectRole('seller')">🏪 Seller</button></div><input type="hidden" id="regRole" value="buyer"><button class="primary" type="submit">Create account</button></form><div class="auth-switch">Already registered? <button onclick="openAuth('login')">Login</button></div>`;document.getElementById('authOverlay').classList.add('open')}
 function selectRole(role){document.getElementById('regRole').value=role;document.getElementById('buyerRole').classList.toggle('active',role==='buyer');document.getElementById('sellerRole').classList.toggle('active',role==='seller')}
 function closeAuth(){document.getElementById('authOverlay').classList.remove('open')}
@@ -116,26 +122,14 @@ async function loadUser(){
   }
 }
 
-/* ═══════════════════════════════════════════════════════════════
-   MODIFIED: logoutUser releases all cart stock before logging out
-   ═══════════════════════════════════════════════════════════════ */
 async function logoutUser(){
   try {
     if(cart.length > 0 && currentUser && currentUser.role === 'buyer'){
-      await api('/api/cart/release-all', {
-        method: 'POST',
-        body: JSON.stringify({ items: cart.map(x => ({ id: x.id, qty: x.qty })) })
-      });
+      await api('/api/cart/release-all', { method: 'POST', body: JSON.stringify({ items: cart.map(x => ({ id: x.id, qty: x.qty })) }) });
     }
-  } catch(e){ /* ignore */ }
-
-  cart = [];
-  saveCart();
-  await api('/api/logout', { method: 'POST' });
-  currentUser = null;
-  showToast('Logged out');
-  await loadUser();
-  await loadProducts();
+  } catch(e){}
+  cart = []; saveCart(); await api('/api/logout', { method: 'POST' }); currentUser = null;
+  showToast('Logged out'); await loadUser(); await loadProducts();
 }
 
 function openDashboard(){if(!currentUser)return openAuth('login');currentUser.role==='seller'?openSellerDashboard():openBuyerDashboard()}
@@ -235,7 +229,7 @@ async function sendChat(e,to,pid){
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  FINAL DEFINITIONS OF DASHBOARD FUNCTIONS (These override all previous versions)
+//  FINAL DEFINITIONS OF DASHBOARD FUNCTIONS
 // ═══════════════════════════════════════════════════════════════
 
 openSellerDashboard=async function(){
@@ -258,9 +252,9 @@ openSellerDashboard=async function(){
             ${orders.length ? orders.map(x=>`
                 <div class="order-card seller-order">
                     <div><b>Order #${x.id} · ${escapeHtml(x.buyer_name)}</b><span class="status">${escapeHtml(x.status)}</span></div>
-                    
                     <small>📅 <b>Time:</b> ${chatTime(x.created_at)}</small>
                     <small>👤 <b>Buyer:</b> ${escapeHtml(x.buyer_name)} · ✉ ${escapeHtml(x.buyer_email||'')}</small>
+                    <small>📍 <b>Deliver to:</b> ${escapeHtml(x.delivery_location || 'N/A')}</small>
                     <small>💰 <b>Total:</b> ${money(x.total)} (Your share: ${money(x.seller_total||x.total)})</small>
                     <small>💳 <b>Payment:</b> ${escapeHtml(x.payment_method)} · ${escapeHtml(x.payment_status)}</small>
                     
@@ -292,17 +286,12 @@ openBuyerDashboard=async function(){
             ${d.orders.length ? d.orders.map(o => {
                 let actionButtons = '';
                 
-                // 1. Show Cancel button if order is still Pending
                 if(o.status === 'Pending') {
                     actionButtons += `<button class="danger" onclick="cancelOrder(${o.id})" style="margin-right:10px;">Cancel Order</button>`;
                 }
-
-                // 2. Show Confirm Delivery button if the seller marked it as Ready
                 if(o.status === 'Ready') {
                     actionButtons += `<button class="primary" onclick="confirmDelivery(${o.id})" style="margin-right:10px; background-color: #10b981;">✅ Confirm Delivery</button>`;
                 }
-                
-                // 3. Show Pay Now button if payment is incomplete AND the order is not cancelled
                 if((o.payment_status === 'Payment Pending' || o.payment_status === 'Initiated' || o.payment_status === 'Failed') && o.status !== 'Cancelled') {
                     actionButtons += `<button class="primary" onclick="retryPayment(${o.id}, '${o.payment_method}')" style="margin-right:10px;">Pay Now</button>`;
                 }
@@ -311,6 +300,7 @@ openBuyerDashboard=async function(){
                 <div class="order-card">
                     <div><b>Order #${o.id}</b><span class="status">${escapeHtml(o.status)}</span></div>
                     <small>${chatTime(o.created_at)} · ${escapeHtml(o.payment_method)} · Payment: ${escapeHtml(o.payment_status)} · <b>${money(o.total)}</b></small>
+                    <small>📍 <b>Deliver to:</b> ${escapeHtml(o.delivery_location || 'N/A')}</small>
                     <div class="order-items">
                         ${(o.items||[]).map(i=>`${i.icon||'📦'} ${escapeHtml(i.name)} × ${i.quantity} · Seller: ${escapeHtml(i.seller_name||'CampusCart')} ${i.seller_id?`<button class="link-btn" onclick="openChat(${i.seller_id},${i.product_id})">💬 Chat seller</button>`:''}`).join('<br>')}
                     </div>
@@ -322,17 +312,13 @@ openBuyerDashboard=async function(){
     }catch(e){showToast(e.message)}
 };
 
-// ===== NEW: Cancel, Confirm Delivery, and Repay Functions =====
-
 async function cancelOrder(orderId) {
     if(!confirm("Are you sure you want to cancel this order? This cannot be undone.")) return;
     try {
         await api(`/api/orders/${orderId}/cancel`, { method: 'POST' });
         showToast('Order cancelled successfully');
-        openBuyerDashboard(); // Refresh the dashboard
-    } catch(e) {
-        showToast(e.message);
-    }
+        openBuyerDashboard();
+    } catch(e) { showToast(e.message); }
 }
 
 async function confirmDelivery(orderId) {
@@ -340,59 +326,31 @@ async function confirmDelivery(orderId) {
     try {
         await api(`/api/orders/${orderId}/confirm-delivery`, { method: 'POST' });
         showToast('Order marked as Delivered! Thank you.');
-        openBuyerDashboard(); // Refresh the dashboard to show the new status
-    } catch(e) {
-        showToast(e.message);
-    }
+        openBuyerDashboard();
+    } catch(e) { showToast(e.message); }
 }
 
 async function retryPayment(orderId, method) {
     try {
-        // Ask backend to generate a new payment token/URL
         const d = await api(`/api/orders/${orderId}/repay`, { 
-            method: 'POST',
-            body: JSON.stringify({ payment_method: method })
+            method: 'POST', body: JSON.stringify({ payment_method: method })
         });
-        
-        // Handle Khalti Redirect
-        if(d.payment === 'redirect' && d.provider === 'Khalti') {
-            window.location.href = d.payment_url;
-            return;
-        }
-        
-        // Handle eSewa Form Submission
+        if(d.payment === 'redirect' && d.provider === 'Khalti') { window.location.href = d.payment_url; return; }
         if(d.payment === 'redirect' && d.provider === 'eSewa') {
-            const form = document.createElement('form');
-            form.method = 'POST';
-            form.action = d.action;
-            Object.entries(d.fields).forEach(([k,v]) => {
-                const input = document.createElement('input');
-                input.type = 'hidden'; 
-                input.name = k; 
-                input.value = v; 
-                form.appendChild(input);
-            });
-            document.body.appendChild(form);
-            form.submit();
-            return;
+            const form = document.createElement('form'); form.method = 'POST'; form.action = d.action;
+            Object.entries(d.fields).forEach(([k,v]) => { const input = document.createElement('input'); input.type = 'hidden'; input.name = k; input.value = v; form.appendChild(input); });
+            document.body.appendChild(form); form.submit(); return;
         }
-    } catch(e) {
-        showToast(e.message);
-    }
+    } catch(e) { showToast(e.message); }
 }
 
-function viewOrderDetails(orderId) {
-    showToast(`Viewing details for Order #${orderId}`);
-}
+function viewOrderDetails(orderId) { showToast(`Viewing details for Order #${orderId}`); }
 
 (function () {
   const originalLoad = loadProducts;
   loadProducts = async function () {
     try { await originalLoad(); } catch (e) {}
-    try {
-      renderHeroProducts();
-      renderFreshListings();
-    } catch (e) { console.warn('Homepage upgrade failed:', e); }
+    try { renderHeroProducts(); renderFreshListings(); } catch (e) { console.warn('Homepage upgrade failed:', e); }
   };
   setTimeout(function () { loadProducts(); }, 100);
 })();
@@ -401,61 +359,25 @@ function renderHeroProducts() {
   const target = document.getElementById('heroProducts');
   if (!target) return;
   const top = products.slice(0, 4);
-  if (!top.length) {
-    target.innerHTML = '<div class="cc-mini-empty">No listings yet</div>';
-    return;
-  }
+  if (!top.length) { target.innerHTML = '<div class="cc-mini-empty">No listings yet</div>'; return; }
   target.innerHTML = top.map(function (p) {
-    const thumb = p.image_url
-      ? '<img src="' + p.image_url + '" alt="">'
-      : (p.icon || '📦');
-    return (
-      '<div class="cc-mini-card" onclick="scrollToProduct(' + p.id + ')">' +
-        '<div class="cc-mini-thumb">' + thumb + '</div>' +
-        '<div class="cc-mini-title">' + escapeHtml(p.name) + '</div>' +
-        '<div class="cc-mini-price">' + money(p.price) + '</div>' +
-      '</div>'
-    );
+    const thumb = p.image_url ? '<img src="' + p.image_url + '" alt="">' : (p.icon || '📦');
+    return ('<div class="cc-mini-card" onclick="scrollToProduct(' + p.id + ')"><div class="cc-mini-thumb">' + thumb + '</div><div class="cc-mini-title">' + escapeHtml(p.name) + '</div><div class="cc-mini-price">' + money(p.price) + '</div></div>');
   }).join('');
 }
 
 function renderFreshListings() {
   const target = document.getElementById('freshGrid');
   if (!target) return;
-  const fresh = products.slice().sort(function (a, b) {
-    return (b.id || 0) - (a.id || 0);
-  }).slice(0, 8);
-
-  if (!fresh.length) {
-    target.innerHTML = '<div class="empty" style="grid-column:1/-1">No listings yet.</div>';
-    return;
-  }
+  const fresh = products.slice().sort(function (a, b) { return (b.id || 0) - (a.id || 0); }).slice(0, 8);
+  if (!fresh.length) { target.innerHTML = '<div class="empty" style="grid-column:1/-1">No listings yet.</div>'; return; }
   target.innerHTML = fresh.map(productCardHome).join('');
 }
 
 function productCardHome(p) {
-  const img = p.image_url
-    ? '<img class="product-img" src="' + p.image_url + '" alt="' + escapeHtml(p.name) + '">'
-    : '<div class="product-img emoji-img">' + (p.icon || '📦') + '</div>';
-
-  const badge = Number(p.stock) > 0
-    ? '<span class="cc-badge cc-badge-new">Available</span>'
-    : '<span class="cc-badge cc-badge-used">Sold out</span>';
-
-  return (
-    '<article class="product" data-product-id="' + p.id + '">' +
-      '<div class="product-img-wrap">' + img + badge + '</div>' +
-      '<div class="product-body">' +
-        '<span class="tag">' + escapeHtml(p.category) + '</span>' +
-        '<h3>' + escapeHtml(p.name) + '</h3>' +
-        '<small class="seller-line">' + escapeHtml(p.seller_name || 'CampusCart') + ' · Stock ' + p.stock + '</small>' +
-        '<div class="price-row">' +
-          '<span class="price">' + money(p.price) + '</span>' +
-          '<button class="add" onclick="addToCart(' + p.id + ')">+ Add</button>' +
-        '</div>' +
-      '</div>' +
-    '</article>'
-  );
+  const img = p.image_url ? '<img class="product-img" src="' + p.image_url + '" alt="' + escapeHtml(p.name) + '">' : '<div class="product-img emoji-img">' + (p.icon || '📦') + '</div>';
+  const badge = Number(p.stock) > 0 ? '<span class="cc-badge cc-badge-new">Available</span>' : '<span class="cc-badge cc-badge-used">Sold out</span>';
+  return ('<article class="product" data-product-id="' + p.id + '"><div class="product-img-wrap">' + img + badge + '</div><div class="product-body"><span class="tag">' + escapeHtml(p.category) + '</span><h3>' + escapeHtml(p.name) + '</h3><small class="seller-line">' + escapeHtml(p.seller_name || 'CampusCart') + ' · Stock ' + p.stock + '</small><div class="price-row"><span class="price">' + money(p.price) + '</span><button class="add" onclick="addToCart(' + p.id + ')">+ Add</button></div></div></article>');
 }
 
 function scrollToProduct(id) {
@@ -463,136 +385,139 @@ function scrollToProduct(id) {
   if (grid) grid.scrollIntoView({ behavior: 'smooth' });
   setTimeout(function () {
     const card = document.querySelector('.product[data-product-id="' + id + '"]');
-    if (card) {
-      card.style.outline = '3px solid #6757e8';
-      card.style.outlineOffset = '3px';
-      setTimeout(function () { card.style.outline = ''; }, 1500);
-    }
+    if (card) { card.style.outline = '3px solid #6757e8'; card.style.outlineOffset = '3px'; setTimeout(function () { card.style.outline = ''; }, 1500); }
   }, 400);
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  LIVE SELLER NOTIFICATION SYSTEM (Polls every 5 seconds)
+//  UNIVERSAL NOTIFICATION SYSTEM (Polls every 5 seconds)
 // ═══════════════════════════════════════════════════════════════
 
-// Remember the last order ID the seller has seen in this browser
 let lastKnownOrderId = parseInt(localStorage.getItem('sellerLastSeenOrderId') || '0');
+let lastKnownMessageId = parseInt(localStorage.getItem('lastKnownMessageId') || '0');
+let orderStatusesCache = JSON.parse(localStorage.getItem('orderStatusesCache') || '{}');
 
-function showNewOrderModal(order) {
-    // Prevent duplicate popups
-    if (document.getElementById('newOrderPopup')) return;
-
-    const itemsHtml = (order.items || []).map(i => 
-        `<li style="display:flex; justify-content:space-between; margin-bottom:5px;">
-            <span>${i.icon || '📦'} ${i.name} × ${i.quantity}</span>
-            <b>${money(i.price * i.quantity)}</b>
-        </li>`
-    ).join('');
-
+function showUniversalPopup(title, messageHtml, type='info') {
+    if (document.getElementById('universalPopup')) return;
     const modal = document.createElement('div');
-    modal.id = 'newOrderPopup';
-    modal.style.cssText = `
-        position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-        background: rgba(0,0,0,0.6); z-index: 10000;
-        display: flex; justify-content: center; align-items: center;
-        backdrop-filter: blur(4px);
-    `;
-
+    modal.id = 'universalPopup';
+    modal.style.cssText = `position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 10000; display: flex; justify-content: center; align-items: center; backdrop-filter: blur(4px);`;
+    let icon = type === 'message' ? '💬' : (type === 'order' ? '📦' : '🔔');
     modal.innerHTML = `
-        <div style="background: var(--card-bg, #1e1e2f); color: var(--text, #fff); 
-                    padding: 24px; border-radius: 12px; width: 90%; max-width: 400px; 
-                    box-shadow: 0 10px 30px rgba(0,0,0,0.5); border: 1px solid #6757e8;
-                    animation: popIn 0.3s ease-out;">
-            <div style="text-align: center; margin-bottom: 15px;">
-                <span style="font-size: 40px;">🔔</span>
-                <h2 style="margin: 5px 0; color: #6757e8;">New Order Received!</h2>
+        <div style="background: var(--card-bg, #1e1e2f); color: var(--text, #fff); padding: 24px; border-radius: 12px; width: 90%; max-width: 400px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); border: 1px solid #6757e8; animation: popIn 0.3s ease-out; text-align: center;">
+            <div style="font-size: 40px; margin-bottom: 10px;">${icon}</div>
+            <h2 style="margin: 0 0 15px 0; color: #6757e8; font-size: 20px;">${title}</h2>
+            <div style="background: rgba(255,255,255,0.05); padding: 15px; border-radius: 8px; margin-bottom: 20px; font-size: 14px; text-align: left;">
+                ${messageHtml}
             </div>
-            
-            <div style="background: rgba(255,255,255,0.05); padding: 15px; border-radius: 8px; margin-bottom: 15px; font-size: 14px;">
-                <p style="margin: 0 0 10px 0;"><b>Order #${order.id}</b> · ${chatTime(order.created_at)}</p>
-                <p style="margin: 0 0 10px 0;">👤 <b>Buyer:</b> ${escapeHtml(order.buyer_name)}</p>
-                <p style="margin: 0 0 10px 0;">💳 <b>Payment:</b> ${escapeHtml(order.payment_method)} · ${escapeHtml(order.payment_status)}</p>
-                
-                <hr style="border-color: rgba(255,255,255,0.1); margin: 10px 0;">
-                
-                <p style="margin: 0 0 5px 0;"><b>Items Ordered:</b></p>
-                <ul style="list-style: none; padding: 0; margin: 0;">
-                    ${itemsHtml}
-                </ul>
-                <hr style="border-color: rgba(255,255,255,0.1); margin: 10px 0;">
-                <p style="text-align: right; margin: 0; font-size: 16px;">Total: <b>${money(order.total)}</b></p>
-            </div>
-
-            <div style="display: flex; gap: 10px;">
-                <button onclick="document.getElementById('newOrderPopup').remove(); openSellerDashboard();" 
-                        style="flex: 1; padding: 12px; background: #6757e8; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold;">
-                    View Dashboard
-                </button>
-                <button onclick="document.getElementById('newOrderPopup').remove();" 
-                        style="flex: 1; padding: 12px; background: transparent; color: inherit; border: 1px solid #ccc; border-radius: 6px; cursor: pointer;">
-                    Dismiss
-                </button>
-            </div>
+            <button onclick="document.getElementById('universalPopup').remove();" style="width: 100%; padding: 12px; background: #6757e8; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold;">Okay</button>
         </div>
-        <style>
-            @keyframes popIn {
-                from { transform: scale(0.8); opacity: 0; }
-                to { transform: scale(1); opacity: 1; }
-            }
-        </style>
+        <style>@keyframes popIn { from { transform: scale(0.8); opacity: 0; } to { transform: scale(1); opacity: 1; } }</style>
     `;
-
     document.body.appendChild(modal);
 }
 
-async function checkForNewOrders() {
-    // 1. Only run this if a seller is currently logged in
-    if (!currentUser || currentUser.role !== 'seller') return;
-    
-    try {
-        const d = await api('/api/orders');
-        if (!d.orders || d.orders.length === 0) return;
-
-        // Sort orders descending to get the newest first
-        d.orders.sort((a, b) => b.id - a.id);
-        const newestOrder = d.orders[0];
-
-        // If a newer Order ID is found compared to what we remembered, alert the seller!
-        if (newestOrder.id > lastKnownOrderId) {
-            // If it's the very first time (0), only show popup if the order is recent (less than 1 day old)
-            if (lastKnownOrderId === 0) {
-                const orderAgeHours = (new Date() - new Date(newestOrder.created_at)) / 1000 / 60 / 60;
-                if (orderAgeHours < 24) {
-                    showNewOrderModal(newestOrder);
-                }
-            } else {
-                // Otherwise, definitely show it for any new order
-                showNewOrderModal(newestOrder);
-            }
-            
-            // Remember this order ID in the browser's localStorage
-            localStorage.setItem('sellerLastSeenOrderId', newestOrder.id);
-            lastKnownOrderId = newestOrder.id;
-            
-            // If the seller dashboard is currently open, refresh it silently
-            if (document.getElementById('dashboardOverlay').classList.contains('open')) {
-                openSellerDashboard();
-            }
-        }
-        
-    } catch (e) {
-        console.error("Notification check failed:", e);
-    }
+function showNewOrderModal(order) {
+    if (document.getElementById('newOrderPopup')) return;
+    const itemsHtml = (order.items || []).map(i => `<li style="display:flex; justify-content:space-between; margin-bottom:5px;"><span>${i.icon || '📦'} ${i.name} × ${i.quantity}</span><b>${money(i.price * i.quantity)}</b></li>`).join('');
+    const modal = document.createElement('div');
+    modal.id = 'newOrderPopup';
+    modal.style.cssText = `position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 10000; display: flex; justify-content: center; align-items: center; backdrop-filter: blur(4px);`;
+    modal.innerHTML = `
+        <div style="background: var(--card-bg, #1e1e2f); color: var(--text, #fff); padding: 24px; border-radius: 12px; width: 90%; max-width: 400px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); border: 1px solid #6757e8; animation: popIn 0.3s ease-out;">
+            <div style="text-align: center; margin-bottom: 15px;"><span style="font-size: 40px;">🔔</span><h2 style="margin: 5px 0; color: #6757e8;">New Order Received!</h2></div>
+            <div style="background: rgba(255,255,255,0.05); padding: 15px; border-radius: 8px; margin-bottom: 15px; font-size: 14px;">
+                <p style="margin: 0 0 10px 0;"><b>Order #${order.id}</b> · ${chatTime(order.created_at)}</p>
+                <p style="margin: 0 0 10px 0;">👤 <b>Buyer:</b> ${escapeHtml(order.buyer_name)}</p>
+                <p style="margin: 0 0 10px 0;">📍 <b>Deliver to:</b> ${escapeHtml(order.delivery_location || 'N/A')}</p>
+                <p style="margin: 0 0 10px 0;">💳 <b>Payment:</b> ${escapeHtml(order.payment_method)} · ${escapeHtml(order.payment_status)}</p>
+                <hr style="border-color: rgba(255,255,255,0.1); margin: 10px 0;">
+                <p style="margin: 0 0 5px 0;"><b>Items Ordered:</b></p>
+                <ul style="list-style: none; padding: 0; margin: 0;">${itemsHtml}</ul>
+                <hr style="border-color: rgba(255,255,255,0.1); margin: 10px 0;">
+                <p style="text-align: right; margin: 0; font-size: 16px;">Total: <b>${money(order.total)}</b></p>
+            </div>
+            <div style="display: flex; gap: 10px;">
+                <button onclick="document.getElementById('newOrderPopup').remove(); openSellerDashboard();" style="flex: 1; padding: 12px; background: #6757e8; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold;">View Dashboard</button>
+                <button onclick="document.getElementById('newOrderPopup').remove();" style="flex: 1; padding: 12px; background: transparent; color: inherit; border: 1px solid #ccc; border-radius: 6px; cursor: pointer;">Dismiss</button>
+            </div>
+        </div>
+        <style>@keyframes popIn { from { transform: scale(0.8); opacity: 0; } to { transform: scale(1); opacity: 1; } }</style>
+    `;
+    document.body.appendChild(modal);
 }
 
-// Check for new orders every 5 seconds (5000 milliseconds)
-setInterval(checkForNewOrders, 5000);
+async function checkUniversalNotifications() {
+    if (!currentUser) return;
+
+    // 1. Check Orders for Status Changes & New Orders
+    try {
+        const d = await api('/api/orders');
+        if (d.orders && d.orders.length > 0) {
+            
+            // A. Seller: New Order Logic
+            if (currentUser.role === 'seller') {
+                const maxOrderId = Math.max(...d.orders.map(o => o.id));
+                if (lastKnownOrderId === 0) {
+                    lastKnownOrderId = maxOrderId;
+                    localStorage.setItem('sellerLastSeenOrderId', maxOrderId);
+                } else if (maxOrderId > lastKnownOrderId) {
+                    const newOrders = d.orders.filter(o => o.id > lastKnownOrderId);
+                    newOrders.sort((a, b) => b.id - a.id);
+                    showNewOrderModal(newOrders[0]); 
+                    lastKnownOrderId = maxOrderId;
+                    localStorage.setItem('sellerLastSeenOrderId', maxOrderId);
+                }
+            }
+
+            // B. Both: Order Status Change Logic
+            d.orders.forEach(o => {
+                const prevStatus = orderStatusesCache[o.id];
+                if (prevStatus && prevStatus !== o.status) {
+                    let msg = `<p><b>Order #${o.id}</b> has been updated to <b>${o.status}</b>.</p>`;
+                    if (o.status === 'Ready') msg += `<p>Your order is ready for pickup/delivery! Please confirm receipt when you get it.</p>`;
+                    if (o.status === 'Delivered') msg += `<p>Order marked as Delivered. Enjoy!</p>`;
+                    if (o.status === 'Cancelled') msg += `<p>This order was cancelled.</p>`;
+                    showUniversalPopup('📦 Order Status Update', msg, 'order');
+                }
+                orderStatusesCache[o.id] = o.status;
+            });
+            localStorage.setItem('orderStatusesCache', JSON.stringify(orderStatusesCache));
+        }
+    } catch(e) { console.error('Order notification error:', e); }
+
+    // 2. Check Messages for New Unread Messages
+    try {
+        const d = await api('/api/messages/conversations');
+        if (d.conversations && d.conversations.length > 0) {
+            const newestConvo = d.conversations[0]; // Conversations are sorted by newest first
+            const latestMsgId = newestConvo.last.id;
+            
+            if (lastKnownMessageId === 0) {
+                lastKnownMessageId = latestMsgId;
+                localStorage.setItem('lastKnownMessageId', latestMsgId);
+            } else if (latestMsgId > lastKnownMessageId) {
+                // Only show popup if the latest message is from the OTHER person
+                if (newestConvo.unread > 0) {
+                    const senderName = newestConvo.user.name;
+                    const preview = escapeHtml(newestConvo.last.body).substring(0, 80) + (newestConvo.last.body.length > 80 ? '...' : '');
+                    showUniversalPopup(`💬 New message from ${senderName}`, `<p>${preview}</p>`, 'message');
+                }
+                lastKnownMessageId = latestMsgId;
+                localStorage.setItem('lastKnownMessageId', latestMsgId);
+            }
+        }
+    } catch(e) { console.error('Message notification error:', e); }
+}
+
+// Check for updates every 5 seconds (5000 milliseconds)
+setInterval(checkUniversalNotifications, 5000);
 
 // Run a check immediately when the user logs in
 const originalLoadUserForNotify = loadUser;
 loadUser = async function() {
     await originalLoadUserForNotify();
-    if (currentUser && currentUser.role === 'seller') {
-        checkForNewOrders();
+    if (currentUser) {
+        checkUniversalNotifications();
     }
 };

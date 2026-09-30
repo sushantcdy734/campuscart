@@ -151,6 +151,7 @@ def init_db():
       payment_method TEXT NOT NULL,
       payment_status TEXT NOT NULL DEFAULT 'Pending',
       status TEXT NOT NULL DEFAULT 'Pending',
+      delivery_location TEXT,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY(buyer_id) REFERENCES users(id)
     );
@@ -188,6 +189,9 @@ def init_db():
         order_cols = {r['name'] for r in c.execute('PRAGMA table_info(orders)').fetchall()}
         if 'payment_status' not in order_cols:
             c.execute("ALTER TABLE orders ADD COLUMN payment_status TEXT NOT NULL DEFAULT 'Pending'")
+        if 'delivery_location' not in order_cols:
+            c.execute("ALTER TABLE orders ADD COLUMN delivery_location TEXT")
+            
     if c.execute('SELECT COUNT(*) n FROM products').fetchone()['n'] == 0:
         c.executemany(
             'INSERT INTO products(name,category,price,icon,description,stock,seller_id,image_url) VALUES(?,?,?,?,?,?,NULL,NULL)',
@@ -242,11 +246,11 @@ def json_response_message(message, status=200):
     return jsonify(message=message), status
 
 
-def create_order(c, buyer_id, validated, method, status='Payment Pending', payment_status='Pending'):
+def create_order(c, buyer_id, validated, method, delivery_location, status='Payment Pending', payment_status='Pending'):
     total = round(sum(p['price'] * qty for p, qty in validated), 2)
     cur = c.execute(
-        'INSERT INTO orders(buyer_id,total,payment_method,payment_status,status) VALUES(?,?,?,?,?)',
-        (buyer_id, total, method, payment_status, status)
+        'INSERT INTO orders(buyer_id,total,payment_method,payment_status,status,delivery_location) VALUES(?,?,?,?,?,?)',
+        (buyer_id, total, method, payment_status, status, delivery_location)
     )
     oid = cur.lastrowid
     for p, qty in validated:
@@ -254,14 +258,7 @@ def create_order(c, buyer_id, validated, method, status='Payment Pending', payme
             'INSERT INTO order_items(order_id,product_id,seller_id,quantity,price) VALUES(?,?,?,?,?)',
             (oid, p['id'], p['seller_id'], qty, p['price'])
         )
-        # Stock is now reserved at add-to-cart time — do NOT reduce here.
     return oid, total
-
-
-def restore_stock(c, order_id):
-    items = c.execute('SELECT product_id, quantity FROM order_items WHERE order_id=?', (order_id,)).fetchall()
-    for item in items:
-        c.execute('UPDATE products SET stock=stock+? WHERE id=?', (item['quantity'], item['product_id']))
 
 
 @app.get('/static/<path:filename>')
@@ -314,58 +311,38 @@ def products():
     c=db(); rows=c.execute('SELECT p.*,u.name seller_name,COALESCE((SELECT AVG(r.rating) FROM reviews r WHERE r.product_id=p.id),0) rating,COALESCE((SELECT COUNT(*) FROM reviews r WHERE r.product_id=p.id),0) review_count FROM products p LEFT JOIN users u ON u.id=p.seller_id WHERE p.stock>0 ORDER BY p.id DESC').fetchall(); c.close(); return jsonify(products=[dict(x) for x in rows])
 
 
-# ═══════════════════════════════════════════════════════════════
-# Cart stock reservation — reduces stock when items are added to cart
-# ═══════════════════════════════════════════════════════════════
-
 @app.post('/api/cart/reserve')
 def cart_reserve():
-    """Reduce stock when an item is added to a buyer's cart."""
     u, err = login_required('buyer')
-    if err:
-        return err
-
+    if err: return err
     d = request.get_json() or {}
     try:
         pid = int(d.get('product_id', 0))
         qty = max(1, int(d.get('qty', 1)))
-    except (TypeError, ValueError):
-        return jsonify(error='Invalid product or quantity.'), 400
-
+    except (TypeError, ValueError): return jsonify(error='Invalid product or quantity.'), 400
     c = db()
     try:
         p = c.execute('SELECT id, name, stock FROM products WHERE id=?', (pid,)).fetchone()
-        if not p:
-            return jsonify(error='Product not found.'), 404
-        if p['stock'] < qty:
-            return jsonify(error=f'Only {p["stock"]} left in stock.'), 400
-
+        if not p: return jsonify(error='Product not found.'), 404
+        if p['stock'] < qty: return jsonify(error=f'Only {p["stock"]} left in stock.'), 400
         c.execute('UPDATE products SET stock=stock-? WHERE id=?', (qty, pid))
         c.commit()
-
         new_stock = c.execute('SELECT stock FROM products WHERE id=?', (pid,)).fetchone()['stock']
         return jsonify(success=True, product_id=pid, new_stock=new_stock)
     except Exception as e:
-        c.rollback()
-        return jsonify(error=str(e)), 500
-    finally:
-        c.close()
+        c.rollback(); return jsonify(error=str(e)), 500
+    finally: c.close()
 
 
 @app.post('/api/cart/release')
 def cart_release():
-    """Restore stock when an item is removed from the cart."""
     u, err = login_required('buyer')
-    if err:
-        return err
-
+    if err: return err
     d = request.get_json() or {}
     try:
         pid = int(d.get('product_id', 0))
         qty = max(1, int(d.get('qty', 1)))
-    except (TypeError, ValueError):
-        return jsonify(error='Invalid product or quantity.'), 400
-
+    except (TypeError, ValueError): return jsonify(error='Invalid product or quantity.'), 400
     c = db()
     try:
         c.execute('UPDATE products SET stock=stock+? WHERE id=?', (qty, pid))
@@ -373,22 +350,16 @@ def cart_release():
         new_stock = c.execute('SELECT stock FROM products WHERE id=?', (pid,)).fetchone()['stock']
         return jsonify(success=True, product_id=pid, new_stock=new_stock)
     except Exception as e:
-        c.rollback()
-        return jsonify(error=str(e)), 500
-    finally:
-        c.close()
+        c.rollback(); return jsonify(error=str(e)), 500
+    finally: c.close()
 
 
 @app.post('/api/cart/release-all')
 def cart_release_all():
-    """Restore stock for every item in the cart — called on logout."""
     u, err = login_required('buyer')
-    if err:
-        return err
-
+    if err: return err
     d = request.get_json() or {}
     items = d.get('items', [])
-
     c = db()
     try:
         for item in items:
@@ -397,15 +368,11 @@ def cart_release_all():
                 qty = max(0, int(item.get('qty', 0)))
                 if pid and qty > 0:
                     c.execute('UPDATE products SET stock=stock+? WHERE id=?', (qty, pid))
-            except (TypeError, ValueError):
-                continue
-        c.commit()
-        return jsonify(success=True)
+            except (TypeError, ValueError): continue
+        c.commit(); return jsonify(success=True)
     except Exception as e:
-        c.rollback()
-        return jsonify(error=str(e)), 500
-    finally:
-        c.close()
+        c.rollback(); return jsonify(error=str(e)), 500
+    finally: c.close()
 
 
 @app.post('/api/products')
@@ -468,6 +435,9 @@ def checkout():
     u,err=login_required('buyer')
     if err:return err
     d=request.get_json() or {}; items=d.get('items',[]); method=d.get('payment_method','COD')
+    delivery_location = str(d.get('delivery_location', '')).strip()
+    if not delivery_location: delivery_location = "Not provided"
+    
     if method not in ('eSewa','Khalti','COD'):return jsonify(error='Unsupported payment method.'),400
     if not items:return jsonify(error='Cart is empty.'),400
     c=db(); validated=[]; total=0
@@ -476,15 +446,14 @@ def checkout():
             pid=int(item['id']); qty=int(item['qty'])
             if qty < 1: raise ValueError('Invalid quantity.')
             p=c.execute('SELECT * FROM products WHERE id=?',(pid,)).fetchone()
-            # Stock was reserved at add-to-cart time; only sanity-check that it exists.
             if not p:raise ValueError(f'Product not found.')
             validated.append((p,qty)); total+=p['price']*qty
         total=round(total,2)
         if method == 'COD':
-            oid,total=create_order(c,u['id'],validated,method,status='Pending',payment_status='COD - Pending')
+            oid,total=create_order(c,u['id'],validated,method,delivery_location,status='Pending',payment_status='COD - Pending')
             c.commit(); c.close(); return jsonify(message='Order placed successfully',order_id=oid,total=total,payment_method=method)
         if method == 'eSewa':
-            oid,total=create_order(c,u['id'],validated,method,status='Payment Pending',payment_status='Initiated')
+            oid,total=create_order(c,u['id'],validated,method,delivery_location,status='Payment Pending',payment_status='Initiated')
             tx=f'CC-{oid}-{uuid.uuid4().hex[:12]}'
             c.execute('INSERT INTO payments(order_id,provider,transaction_uuid,amount,status) VALUES(?,?,?,?,?)',(oid,'eSewa',tx,total,'Initiated'))
             c.commit(); c.close()
@@ -496,7 +465,7 @@ def checkout():
                 'signature':make_esewa_signature(f'{total:.2f}',tx)})
         if not KHALTI_SECRET_KEY:
             c.rollback(); c.close(); return jsonify(error='Khalti is not configured. Set KHALTI_SECRET_KEY in .env.'),503
-        oid,total=create_order(c,u['id'],validated,method,status='Payment Pending',payment_status='Initiated')
+        oid,total=create_order(c,u['id'],validated,method,delivery_location,status='Payment Pending',payment_status='Initiated')
         purchase=f'CampusCart Order #{oid}'
         c.commit();
         return_url=absolute_url('/payment/khalti/return')
@@ -523,8 +492,7 @@ def esewa_success():
     try:
         decoded=base64.b64decode(encoded).decode('utf-8')
         data=json.loads(decoded)
-    except Exception:
-        return 'Invalid eSewa payment response.',400
+    except Exception: return 'Invalid eSewa payment response.',400
     if not verify_esewa_response(data): return 'Payment verification failed.',400
     tx=data.get('transaction_uuid'); status=data.get('status'); total=float(data.get('total_amount',0))
     c=db(); pay=c.execute('SELECT * FROM payments WHERE provider=? AND transaction_uuid=?',( 'eSewa',tx)).fetchone()
@@ -593,7 +561,6 @@ def order_status(oid):
 def health(): return jsonify(status='ok',service='CampusCart API',payments={'eSewa':True,'Khalti':bool(KHALTI_SECRET_KEY)})
 
 
-# ===== CampusCart Pro Upgrade: wishlist, reviews, profile, notifications, analytics =====
 def _upgrade_features():
     c=db(); c.executescript('''
     CREATE TABLE IF NOT EXISTS wishlists(user_id INTEGER NOT NULL, product_id INTEGER NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(user_id,product_id));
@@ -769,7 +736,7 @@ def message_conversations():
    seen.add(oid);other=c.execute('SELECT id,name,email,role FROM users WHERE id=?',(oid,)).fetchone()
    if not other:continue
    unread=c.execute('SELECT COUNT(*) n FROM messages WHERE sender_id=? AND receiver_id=? AND is_read=0',(oid,u['id'])).fetchone()['n']
-   out.append({'user':dict(other),'last':{'body':m['body'],'created_at':m['created_at']},'unread':unread})
+   out.append({'user':dict(other),'last':{'id':m['id'],'body':m['body'],'created_at':m['created_at']},'unread':unread})
   return jsonify(conversations=out)
  finally:c.close()
 
@@ -880,116 +847,76 @@ def add_tracking(oid):
     c.execute('INSERT INTO order_tracking(order_id,status,note) VALUES(?,?,?)',(oid,status,note)); c.commit(); c.close(); return jsonify(message='Tracking updated')
 
 
-# ═══════════════════════════════════════════════════════════════
-# NEW ROUTES: Cancel Order, Retry Payment, & Confirm Delivery
-# ═══════════════════════════════════════════════════════════════
-
 @app.post('/api/orders/<int:oid>/cancel')
 def cancel_order(oid):
     u, err = login_required('buyer')
     if err: return err
-    
     c = db()
     o = c.execute('SELECT status FROM orders WHERE id=? AND buyer_id=?', (oid, u['id'])).fetchone()
     if not o:
-        c.close()
-        return jsonify(error='Order not found.'), 404
-        
+        c.close(); return jsonify(error='Order not found.'), 404
     if o['status'] not in ('Pending', 'Payment Pending'):
-        c.close()
-        return jsonify(error='Only pending orders can be cancelled.'), 400
-        
+        c.close(); return jsonify(error='Only pending orders can be cancelled.'), 400
     c.execute("UPDATE orders SET status='Cancelled' WHERE id=?", (oid,))
-    c.commit()
-    c.close()
-    return jsonify(message='Order cancelled successfully')
+    c.commit(); c.close(); return jsonify(message='Order cancelled successfully')
 
 
 @app.post('/api/orders/<int:oid>/repay')
 def repay_order(oid):
     u, err = login_required('buyer')
     if err: return err
-    
     d = request.get_json() or {}
     method = d.get('payment_method')
-    
     c = db()
-    o = c.execute('SELECT total, status FROM orders WHERE id=? AND buyer_id=?', (oid, u['id'])).fetchone()
+    o = c.execute('SELECT total, status, delivery_location FROM orders WHERE id=? AND buyer_id=?', (oid, u['id'])).fetchone()
     if not o:
-        c.close()
-        return jsonify(error='Order not found.'), 404
-        
+        c.close(); return jsonify(error='Order not found.'), 404
     if o['status'] == 'Cancelled':
-        c.close()
-        return jsonify(error='Cannot pay for a cancelled order.'), 400
-        
+        c.close(); return jsonify(error='Cannot pay for a cancelled order.'), 400
     total = o['total']
+    delivery_location = o['delivery_location'] or "Not provided"
     
-    # Handle eSewa Re-payment
     if method == 'eSewa':
         tx = f'CC-{oid}-{uuid.uuid4().hex[:12]}'
         c.execute('INSERT INTO payments(order_id,provider,transaction_uuid,amount,status) VALUES(?,?,?,?,?)',(oid,'eSewa',tx,total,'Initiated'))
         c.commit(); c.close()
-        
-        success = absolute_url('/payment/esewa/success')
-        failure = absolute_url('/payment/esewa/failure')
+        success = absolute_url('/payment/esewa/success'); failure = absolute_url('/payment/esewa/failure')
         return jsonify(payment='redirect',provider='eSewa',order_id=oid,action=ESEWA_FORM_URL,fields={
             'amount':f'{total:.2f}','tax_amount':'0','total_amount':f'{total:.2f}','transaction_uuid':tx,
             'product_code':ESEWA_PRODUCT_CODE,'product_service_charge':'0','product_delivery_charge':'0',
             'success_url':success,'failure_url':failure,'signed_field_names':'total_amount,transaction_uuid,product_code',
             'signature':make_esewa_signature(f'{total:.2f}',tx)})
-            
-    # Handle Khalti Re-payment
     if method == 'Khalti':
         if not KHALTI_SECRET_KEY:
-            c.close()
-            return jsonify(error='Khalti is not configured.'), 503
-            
+            c.close(); return jsonify(error='Khalti is not configured.'), 503
         purchase = f'CampusCart Order #{oid}'
         return_url = absolute_url('/payment/khalti/return')
         website_url = BASE_URL or request.url_root.rstrip('/')
         payload = {'return_url':return_url,'website_url':website_url,'amount':int(round(total*100)),'purchase_order_id':str(oid),'purchase_order_name':purchase,'customer_info':{'name':u['name'],'email':u['email']}}
-        
         try:
             r = requests.post(f'{KHALTI_BASE_URL}/epayment/initiate/',json=payload,headers={'Authorization':f'Key {KHALTI_SECRET_KEY}','Content-Type':'application/json'},timeout=20)
             data = r.json()
         except Exception as ex:
-            c.close()
-            return jsonify(error=f'Khalti connection failed: {ex}'), 502
-            
+            c.close(); return jsonify(error=f'Khalti connection failed: {ex}'), 502
         if r.status_code >= 400 or not data.get('pidx'):
-            c.close()
-            return jsonify(error='Khalti could not initiate the payment.'), 502
-            
+            c.close(); return jsonify(error='Khalti could not initiate the payment.'), 502
         c.execute('INSERT INTO payments(order_id,provider,pidx,amount,status,raw_response) VALUES(?,?,?,?,?,?)',(oid,'Khalti',data['pidx'],total,'Initiated',json.dumps(data)))
-        c.commit(); c.close()
-        return jsonify(payment='redirect',provider='Khalti',order_id=oid,payment_url=data['payment_url'])
-        
-    c.close()
-    return jsonify(error='Invalid payment method.'), 400
+        c.commit(); c.close(); return jsonify(payment='redirect',provider='Khalti',order_id=oid,payment_url=data['payment_url'])
+    c.close(); return jsonify(error='Invalid payment method.'), 400
 
 
 @app.post('/api/orders/<int:oid>/confirm-delivery')
 def confirm_delivery(oid):
     u, err = login_required('buyer')
     if err: return err
-    
     c = db()
-    # Verify the order belongs to this buyer
     o = c.execute('SELECT status FROM orders WHERE id=? AND buyer_id=?', (oid, u['id'])).fetchone()
     if not o:
-        c.close()
-        return jsonify(error='Order not found or does not belong to you.'), 404
-        
+        c.close(); return jsonify(error='Order not found or does not belong to you.'), 404
     if o['status'] == 'Cancelled':
-        c.close()
-        return jsonify(error='Cannot confirm delivery for a cancelled order.'), 400
-        
-    # Update status to Delivered
+        c.close(); return jsonify(error='Cannot confirm delivery for a cancelled order.'), 400
     c.execute("UPDATE orders SET status='Delivered' WHERE id=?", (oid,))
-    c.commit()
-    c.close()
-    return jsonify(message='Delivery confirmed successfully')
+    c.commit(); c.close(); return jsonify(message='Delivery confirmed successfully')
 
 
 if __name__ == '__main__':
