@@ -881,7 +881,7 @@ def add_tracking(oid):
 
 
 # ═══════════════════════════════════════════════════════════════
-# NEW ROUTES: Cancel Order & Retry Payment
+# NEW ROUTES: Cancel Order, Retry Payment, & Confirm Delivery
 # ═══════════════════════════════════════════════════════════════
 
 @app.post('/api/orders/<int:oid>/cancel')
@@ -967,6 +967,29 @@ def repay_order(oid):
         
     c.close()
     return jsonify(error='Invalid payment method.'), 400
+
+
+@app.post('/api/orders/<int:oid>/confirm-delivery')
+def confirm_delivery(oid):
+    u, err = login_required('buyer')
+    if err: return err
+    
+    c = db()
+    # Verify the order belongs to this buyer
+    o = c.execute('SELECT status FROM orders WHERE id=? AND buyer_id=?', (oid, u['id'])).fetchone()
+    if not o:
+        c.close()
+        return jsonify(error='Order not found or does not belong to you.'), 404
+        
+    if o['status'] == 'Cancelled':
+        c.close()
+        return jsonify(error='Cannot confirm delivery for a cancelled order.'), 400
+        
+    # Update status to Delivered
+    c.execute("UPDATE orders SET status='Delivered' WHERE id=?", (oid,))
+    c.commit()
+    c.close()
+    return jsonify(message='Delivery confirmed successfully')
 
 
 if __name__ == '__main__':

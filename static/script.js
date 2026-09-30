@@ -472,10 +472,77 @@ function scrollToProduct(id) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  LIVE SELLER NOTIFICATION SYSTEM (Polls every 20 seconds)
+//  LIVE SELLER NOTIFICATION SYSTEM (Polls every 15 seconds)
 // ═══════════════════════════════════════════════════════════════
 
-let lastKnownPendingCount = null;
+// Track the highest Order ID the seller has seen so far
+let lastKnownOrderId = null;
+
+// Custom Pop-Up Modal for New Orders
+function showNewOrderModal(order) {
+    // 1. Create the modal HTML
+    const itemsHtml = (order.items || []).map(i => 
+        `<li style="display:flex; justify-content:space-between; margin-bottom:5px;">
+            <span>${i.icon || '📦'} ${i.name} × ${i.quantity}</span>
+            <b>${money(i.price * i.quantity)}</b>
+        </li>`
+    ).join('');
+
+    const modal = document.createElement('div');
+    modal.id = 'newOrderPopup';
+    modal.style.cssText = `
+        position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+        background: rgba(0,0,0,0.6); z-index: 10000;
+        display: flex; justify-content: center; align-items: center;
+        backdrop-filter: blur(4px);
+    `;
+
+    modal.innerHTML = `
+        <div style="background: var(--card-bg, #1e1e2f); color: var(--text, #fff); 
+                    padding: 24px; border-radius: 12px; width: 90%; max-width: 400px; 
+                    box-shadow: 0 10px 30px rgba(0,0,0,0.5); border: 1px solid #6757e8;
+                    animation: popIn 0.3s ease-out;">
+            <div style="text-align: center; margin-bottom: 15px;">
+                <span style="font-size: 40px;">🔔</span>
+                <h2 style="margin: 5px 0; color: #6757e8;">New Order Received!</h2>
+            </div>
+            
+            <div style="background: rgba(255,255,255,0.05); padding: 15px; border-radius: 8px; margin-bottom: 15px; font-size: 14px;">
+                <p style="margin: 0 0 10px 0;"><b>Order #${order.id}</b> · ${chatTime(order.created_at)}</p>
+                <p style="margin: 0 0 10px 0;">👤 <b>Buyer:</b> ${escapeHtml(order.buyer_name)}</p>
+                <p style="margin: 0 0 10px 0;">💳 <b>Payment:</b> ${escapeHtml(order.payment_method)} · ${escapeHtml(order.payment_status)}</p>
+                
+                <hr style="border-color: rgba(255,255,255,0.1); margin: 10px 0;">
+                
+                <p style="margin: 0 0 5px 0;"><b>Items Ordered:</b></p>
+                <ul style="list-style: none; padding: 0; margin: 0;">
+                    ${itemsHtml}
+                </ul>
+                <hr style="border-color: rgba(255,255,255,0.1); margin: 10px 0;">
+                <p style="text-align: right; margin: 0; font-size: 16px;">Total: <b>${money(order.total)}</b></p>
+            </div>
+
+            <div style="display: flex; gap: 10px;">
+                <button onclick="document.getElementById('newOrderPopup').remove(); openSellerDashboard();" 
+                        style="flex: 1; padding: 12px; background: #6757e8; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold;">
+                    View Dashboard
+                </button>
+                <button onclick="document.getElementById('newOrderPopup').remove();" 
+                        style="flex: 1; padding: 12px; background: transparent; color: inherit; border: 1px solid #ccc; border-radius: 6px; cursor: pointer;">
+                    Dismiss
+                </button>
+            </div>
+        </div>
+        <style>
+            @keyframes popIn {
+                from { transform: scale(0.8); opacity: 0; }
+                to { transform: scale(1); opacity: 1; }
+            }
+        </style>
+    `;
+
+    document.body.appendChild(modal);
+}
 
 async function checkForNewOrders() {
     // 1. Only run this if a seller is currently logged in
@@ -484,42 +551,55 @@ async function checkForNewOrders() {
     try {
         // 2. Fetch the latest orders
         const d = await api('/api/orders');
-        // Count orders that are waiting for action (Pending or Confirmed)
-        const pendingOrders = d.orders.filter(o => o.status === 'Pending' || o.status === 'Confirmed').length;
+        if (!d.orders || d.orders.length === 0) return;
 
-        // 3. Initialize the count on the first check
-        if (lastKnownPendingCount === null) {
-            lastKnownPendingCount = pendingOrders;
+        // 3. Find the highest Order ID in the list
+        const maxOrderId = Math.max(...d.orders.map(o => o.id));
+
+        // 4. Initialize on first check (baseline setup)
+        if (lastKnownOrderId === null) {
+            lastKnownOrderId = maxOrderId;
             return;
         }
 
-        // 4. If the number of pending orders increased, alert the seller!
-        if (pendingOrders > lastKnownPendingCount) {
-            showToast(`🔔 You have a NEW order! (Total pending: ${pendingOrders})`);
+        // 5. If a newer Order ID is found, alert the seller!
+        if (maxOrderId > lastKnownOrderId) {
+            // Find all the new orders
+            const newOrders = d.orders.filter(o => o.id > lastKnownOrderId);
             
-            // If the seller dashboard is currently open, refresh it automatically
-            if (document.getElementById('dashboardOverlay').classList.contains('open')) {
-                openSellerDashboard();
+            if (newOrders.length > 0) {
+                // Sort newest first
+                newOrders.sort((a, b) => b.id - a.id);
+                
+                // Show the pop-up for the newest order
+                showNewOrderModal(newOrders[0]);
+                
+                // If the seller dashboard is currently open, refresh it silently in the background
+                if (document.getElementById('dashboardOverlay').classList.contains('open')) {
+                    openSellerDashboard();
+                }
             }
+            
+            // Update the local storage to prevent duplicate alerts
+            lastKnownOrderId = maxOrderId;
         }
-        
-        // Update the known count
-        lastKnownPendingCount = pendingOrders;
         
     } catch (e) {
         console.error("Notification check failed:", e);
     }
 }
 
-// Check for new orders every 20 seconds (20000 milliseconds)
-setInterval(checkForNewOrders, 20000);
+// Check for new orders every 15 seconds (15000 milliseconds)
+setInterval(checkForNewOrders, 15000);
 
-// Also run a check immediately when the user logs in to set the baseline
+// Reset the tracker when a seller logs in fresh
 const originalLoadUserForNotify = loadUser;
 loadUser = async function() {
     await originalLoadUserForNotify();
     if (currentUser && currentUser.role === 'seller') {
-        lastKnownPendingCount = null; // Reset on login
-        checkForNewOrders();
+        // Don't reset completely, just make sure we have a baseline
+        if (lastKnownOrderId === null) {
+            checkForNewOrders();
+        }
     }
 };
