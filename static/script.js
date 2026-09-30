@@ -470,3 +470,56 @@ function scrollToProduct(id) {
     }
   }, 400);
 }
+
+// ═══════════════════════════════════════════════════════════════
+//  LIVE SELLER NOTIFICATION SYSTEM (Polls every 20 seconds)
+// ═══════════════════════════════════════════════════════════════
+
+let lastKnownPendingCount = null;
+
+async function checkForNewOrders() {
+    // 1. Only run this if a seller is currently logged in
+    if (!currentUser || currentUser.role !== 'seller') return;
+    
+    try {
+        // 2. Fetch the latest orders
+        const d = await api('/api/orders');
+        // Count orders that are waiting for action (Pending or Confirmed)
+        const pendingOrders = d.orders.filter(o => o.status === 'Pending' || o.status === 'Confirmed').length;
+
+        // 3. Initialize the count on the first check
+        if (lastKnownPendingCount === null) {
+            lastKnownPendingCount = pendingOrders;
+            return;
+        }
+
+        // 4. If the number of pending orders increased, alert the seller!
+        if (pendingOrders > lastKnownPendingCount) {
+            showToast(`🔔 You have a NEW order! (Total pending: ${pendingOrders})`);
+            
+            // If the seller dashboard is currently open, refresh it automatically
+            if (document.getElementById('dashboardOverlay').classList.contains('open')) {
+                openSellerDashboard();
+            }
+        }
+        
+        // Update the known count
+        lastKnownPendingCount = pendingOrders;
+        
+    } catch (e) {
+        console.error("Notification check failed:", e);
+    }
+}
+
+// Check for new orders every 20 seconds (20000 milliseconds)
+setInterval(checkForNewOrders, 20000);
+
+// Also run a check immediately when the user logs in to set the baseline
+const originalLoadUserForNotify = loadUser;
+loadUser = async function() {
+    await originalLoadUserForNotify();
+    if (currentUser && currentUser.role === 'seller') {
+        lastKnownPendingCount = null; // Reset on login
+        checkForNewOrders();
+    }
+};
