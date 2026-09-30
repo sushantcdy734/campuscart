@@ -879,5 +879,95 @@ def add_tracking(oid):
     if not owns: c.close(); return jsonify(error='Order not found.'),404
     c.execute('INSERT INTO order_tracking(order_id,status,note) VALUES(?,?,?)',(oid,status,note)); c.commit(); c.close(); return jsonify(message='Tracking updated')
 
+
+# ═══════════════════════════════════════════════════════════════
+# NEW ROUTES: Cancel Order & Retry Payment
+# ═══════════════════════════════════════════════════════════════
+
+@app.post('/api/orders/<int:oid>/cancel')
+def cancel_order(oid):
+    u, err = login_required('buyer')
+    if err: return err
+    
+    c = db()
+    o = c.execute('SELECT status FROM orders WHERE id=? AND buyer_id=?', (oid, u['id'])).fetchone()
+    if not o:
+        c.close()
+        return jsonify(error='Order not found.'), 404
+        
+    if o['status'] not in ('Pending', 'Payment Pending'):
+        c.close()
+        return jsonify(error='Only pending orders can be cancelled.'), 400
+        
+    c.execute("UPDATE orders SET status='Cancelled' WHERE id=?", (oid,))
+    c.commit()
+    c.close()
+    return jsonify(message='Order cancelled successfully')
+
+
+@app.post('/api/orders/<int:oid>/repay')
+def repay_order(oid):
+    u, err = login_required('buyer')
+    if err: return err
+    
+    d = request.get_json() or {}
+    method = d.get('payment_method')
+    
+    c = db()
+    o = c.execute('SELECT total, status FROM orders WHERE id=? AND buyer_id=?', (oid, u['id'])).fetchone()
+    if not o:
+        c.close()
+        return jsonify(error='Order not found.'), 404
+        
+    if o['status'] == 'Cancelled':
+        c.close()
+        return jsonify(error='Cannot pay for a cancelled order.'), 400
+        
+    total = o['total']
+    
+    # Handle eSewa Re-payment
+    if method == 'eSewa':
+        tx = f'CC-{oid}-{uuid.uuid4().hex[:12]}'
+        c.execute('INSERT INTO payments(order_id,provider,transaction_uuid,amount,status) VALUES(?,?,?,?,?)',(oid,'eSewa',tx,total,'Initiated'))
+        c.commit(); c.close()
+        
+        success = absolute_url('/payment/esewa/success')
+        failure = absolute_url('/payment/esewa/failure')
+        return jsonify(payment='redirect',provider='eSewa',order_id=oid,action=ESEWA_FORM_URL,fields={
+            'amount':f'{total:.2f}','tax_amount':'0','total_amount':f'{total:.2f}','transaction_uuid':tx,
+            'product_code':ESEWA_PRODUCT_CODE,'product_service_charge':'0','product_delivery_charge':'0',
+            'success_url':success,'failure_url':failure,'signed_field_names':'total_amount,transaction_uuid,product_code',
+            'signature':make_esewa_signature(f'{total:.2f}',tx)})
+            
+    # Handle Khalti Re-payment
+    if method == 'Khalti':
+        if not KHALTI_SECRET_KEY:
+            c.close()
+            return jsonify(error='Khalti is not configured.'), 503
+            
+        purchase = f'CampusCart Order #{oid}'
+        return_url = absolute_url('/payment/khalti/return')
+        website_url = BASE_URL or request.url_root.rstrip('/')
+        payload = {'return_url':return_url,'website_url':website_url,'amount':int(round(total*100)),'purchase_order_id':str(oid),'purchase_order_name':purchase,'customer_info':{'name':u['name'],'email':u['email']}}
+        
+        try:
+            r = requests.post(f'{KHALTI_BASE_URL}/epayment/initiate/',json=payload,headers={'Authorization':f'Key {KHALTI_SECRET_KEY}','Content-Type':'application/json'},timeout=20)
+            data = r.json()
+        except Exception as ex:
+            c.close()
+            return jsonify(error=f'Khalti connection failed: {ex}'), 502
+            
+        if r.status_code >= 400 or not data.get('pidx'):
+            c.close()
+            return jsonify(error='Khalti could not initiate the payment.'), 502
+            
+        c.execute('INSERT INTO payments(order_id,provider,pidx,amount,status,raw_response) VALUES(?,?,?,?,?,?)',(oid,'Khalti',data['pidx'],total,'Initiated',json.dumps(data)))
+        c.commit(); c.close()
+        return jsonify(payment='redirect',provider='Khalti',order_id=oid,payment_url=data['payment_url'])
+        
+    c.close()
+    return jsonify(error='Invalid payment method.'), 400
+
+
 if __name__ == '__main__':
  init_db(); app.run(host=os.environ.get('CAMPUS_HOST','0.0.0.0'), port=int(os.environ.get('CAMPUS_PORT','5000')), debug=os.environ.get('FLASK_DEBUG','1')=='1')
