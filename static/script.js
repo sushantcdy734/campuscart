@@ -455,18 +455,25 @@ async function checkUniversalNotifications() {
         const d = await api('/api/orders');
         if (d.orders && d.orders.length > 0) {
             
+            // Sort orders descending to get the newest first
+            d.orders.sort((a, b) => b.id - a.id);
+            const newestOrder = d.orders[0];
+
             // A. Seller: New Order Logic
             if (currentUser.role === 'seller') {
-                const maxOrderId = Math.max(...d.orders.map(o => o.id));
                 if (lastKnownOrderId === 0) {
-                    lastKnownOrderId = maxOrderId;
-                    localStorage.setItem('sellerLastSeenOrderId', maxOrderId);
-                } else if (maxOrderId > lastKnownOrderId) {
-                    const newOrders = d.orders.filter(o => o.id > lastKnownOrderId);
-                    newOrders.sort((a, b) => b.id - a.id);
-                    showNewOrderModal(newOrders[0]); 
-                    lastKnownOrderId = maxOrderId;
-                    localStorage.setItem('sellerLastSeenOrderId', maxOrderId);
+                    // First time checking: If the order was placed in the last 15 minutes, show popup!
+                    const orderAgeMinutes = (new Date() - new Date(newestOrder.created_at)) / 1000 / 60;
+                    if (orderAgeMinutes < 15 && newestOrder.status === 'Pending') {
+                        showNewOrderModal(newestOrder);
+                    }
+                    lastKnownOrderId = newestOrder.id;
+                    localStorage.setItem('sellerLastSeenOrderId', newestOrder.id);
+                } else if (newestOrder.id > lastKnownOrderId) {
+                    // A newer Order ID is found
+                    showNewOrderModal(newestOrder); 
+                    lastKnownOrderId = newestOrder.id;
+                    localStorage.setItem('sellerLastSeenOrderId', newestOrder.id);
                 }
             }
 
@@ -490,14 +497,18 @@ async function checkUniversalNotifications() {
     try {
         const d = await api('/api/messages/conversations');
         if (d.conversations && d.conversations.length > 0) {
-            const newestConvo = d.conversations[0]; // Conversations are sorted by newest first
+            const newestConvo = d.conversations[0]; 
             const latestMsgId = newestConvo.last.id;
             
             if (lastKnownMessageId === 0) {
                 lastKnownMessageId = latestMsgId;
                 localStorage.setItem('lastKnownMessageId', latestMsgId);
+                if (newestConvo.unread > 0) {
+                    const senderName = newestConvo.user.name;
+                    const preview = escapeHtml(newestConvo.last.body).substring(0, 80) + (newestConvo.last.body.length > 80 ? '...' : '');
+                    showUniversalPopup(`💬 New message from ${senderName}`, `<p>${preview}</p>`, 'message');
+                }
             } else if (latestMsgId > lastKnownMessageId) {
-                // Only show popup if the latest message is from the OTHER person
                 if (newestConvo.unread > 0) {
                     const senderName = newestConvo.user.name;
                     const preview = escapeHtml(newestConvo.last.body).substring(0, 80) + (newestConvo.last.body.length > 80 ? '...' : '');
